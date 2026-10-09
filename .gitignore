@@ -1,0 +1,24 @@
+# One incremental build tree; all compiled outputs remain local.
+/build/
+/build-*/
+/out/
+
+# Local runtime preferences and diagnostics.
+/train-simulator.cfg
+*.log
+*.trace
+core
+core.*
+
+# Editor and operating-system state.
+.cache/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python generation caches (generated WAV assets are intentionally tracked).
+__pycache__/
+*.pyc

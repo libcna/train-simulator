@@ -1,0 +1,50 @@
+#pragma once
+
+#include "Microsoft/Xna/Framework/Vector3.hpp"
+#include <cmath>
+#include <algorithm>
+
+namespace TrainSim::Render {
+
+// Fixed sunny daylight in absolute route coordinates, expressed in a local route frame.
+// This is the direction rays travel, so the visible sun lies in the opposite direction.
+inline Microsoft::Xna::Framework::Vector3 daylightDirection(double heading)
+{
+    const double c = std::cos(heading), s = std::sin(heading);
+    return Microsoft::Xna::Framework::Vector3::Normalize({
+        static_cast<float>(0.42*c-0.34*s),-0.84f,
+        static_cast<float>(0.42*s+0.34*c)});
+}
+
+struct AvatarCabinLighting
+{
+    Microsoft::Xna::Framework::Vector3 direction;
+    Microsoft::Xna::Framework::Vector3 diffuse;
+};
+
+struct ExteriorLighting
+{
+    Microsoft::Xna::Framework::Vector3 ambient;
+    Microsoft::Xna::Framework::Vector3 diffuse;
+};
+
+inline ExteriorLighting exteriorLighting(float tunnelMix)
+{
+    using namespace Microsoft::Xna::Framework;
+    const float t=std::clamp(tunnelMix,0.0f,1.0f);
+    // Cool skylight and warmer direct sun retain the old total lit-surface energy, but no
+    // longer fill every shaded face with almost the same intensity as a sun-facing surface.
+    return {Vector3{0.35f,0.42f,0.52f}*(1-t)+Vector3{0.40f,0.41f,0.43f}*t,
+            Vector3{0.67f,0.59f,0.47f}*(1-t)+Vector3{0.12f,0.12f,0.12f}*t};
+}
+
+inline AvatarCabinLighting avatarCabinLighting(
+    const Microsoft::Xna::Framework::Vector3& daylight, float tunnelMix)
+{
+    using Microsoft::Xna::Framework::Vector3;
+    const float t = std::clamp(tunnelMix,0.0f,1.0f);
+    return {Vector3::Normalize(daylight*(1.0f-t)+Vector3{0,-1,0}*t),
+            Vector3{0.46f-0.28f*t,0.43f-0.24f*t,0.37f-0.17f*t}};
+}
+
+} // namespace TrainSim::Render
