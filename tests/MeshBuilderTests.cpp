@@ -12,6 +12,7 @@
 #include "trainsim/render/ShoreGeometry.hpp"
 #include "trainsim/render/BridgeGeometry.hpp"
 #include "trainsim/render/TunnelGeometry.hpp"
+#include "trainsim/render/TrackGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3401,7 +3402,7 @@ TunnelTestPoint tunnelTestPoint(double distance,double lateral)
 TEST_CASE("tunnel lining segments stay on their wall face and look toward the track")
 {
     using namespace TrainSim::Render;
-    for (const auto [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
+    for (const auto& [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
     {
         MeshBuilder structure;
         MeshBuilder lining;
@@ -3473,4 +3474,74 @@ TEST_CASE("tunnel wall luminaire has a thin lens and a seamless centred wash")
         if (std::abs(vertex.position.Z-50.0f) < 1.0e-4f
             && std::abs(vertex.position.Y-kTunnelLuminaireHeight) < 1.0e-4f)
             REQUIRE(vertex.color != liningColour);
+}
+
+TEST_CASE("ballast shoulder toe wobbles within bounds and meets between segments")
+{
+    using TrainSim::Render::ballastShoulderToe;
+    float previous = ballastShoulderToe(0.0);
+    for (double distance = 0.0; distance <= 3'000.0; distance += 0.5)
+    {
+        const float toe = ballastShoulderToe(distance);
+        REQUIRE(toe >= 3.10f);
+        REQUIRE(toe <= 3.62f);
+        REQUIRE(std::abs(toe-previous) < 0.12f);
+        previous = toe;
+    }
+    REQUIRE(ballastShoulderToe(52'000.0) == ballastShoulderToe(52'000.0));
+}
+
+TEST_CASE("concrete sleeper profile is chamfered within the box envelope and outward facing")
+{
+    using namespace TrainSim::Render;
+    using Microsoft::Xna::Framework::Matrix;
+    const Matrix placement = Matrix::CreateTranslation(0.0f,0.0f,7.0f);
+    MeshBuilder simple;
+    addConcreteSleeper(simple,placement,-5.0f,Color(127,124,116,255),false);
+    MeshBuilder detailed;
+    addConcreteSleeper(detailed,placement,-5.0f,Color(127,124,116,255),true);
+    REQUIRE(simple.data().indices.size() == 36);
+    REQUIRE(detailed.data().indices.size() == 90);
+    int topVertices = 0;
+    for (const auto& vertex : detailed.data().vertices)
+    {
+        REQUIRE(vertex.position.X >= -5.0f-kSleeperHalfLength-1.0e-5f);
+        REQUIRE(vertex.position.X <= -5.0f+kSleeperHalfLength+1.0e-5f);
+        REQUIRE(vertex.position.Y >= -0.10f-1.0e-5f);
+        REQUIRE(vertex.position.Y <= 1.0e-5f);
+        REQUIRE(std::abs(vertex.position.Z-7.0f) <= kSleeperHalfWidth+1.0e-5f);
+        REQUIRE(std::abs(vertex.normal.LengthSquared()-1.0f) < 1.0e-4f);
+        if (vertex.position.Y > -1.0e-5f)
+        {
+            ++topVertices;
+            // Rail-seat tops are narrower than the base: the long sides are chamfers.
+            REQUIRE(std::abs(vertex.position.Z-7.0f) <= kSleeperTopHalfWidth+1.0e-5f);
+        }
+        // Side normals lean outward (away from the sleeper axis), never into the block.
+        if (std::abs(vertex.normal.Z) > 0.5f)
+            REQUIRE(vertex.normal.Z*(vertex.position.Z-7.0f) > 0.0f);
+    }
+    REQUIRE(topVertices == 24);
+}
+
+TEST_CASE("rail profile has a broad foot slender web and wider head below the running surface")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder track;
+    addRailProfile(track,Microsoft::Xna::Framework::Matrix::getIdentityProperty(),0.76f,3.0f);
+    REQUIRE(track.data().indices.size() == 3U*36U);
+    float highest = -1.0f;
+    for (const auto& vertex : track.data().vertices)
+    {
+        const float across = std::abs(vertex.position.X-0.76f);
+        REQUIRE(across <= kRailFootHalfWidth+1.0e-5f);
+        if (vertex.position.Y > kRailFootTop+1.0e-4f && vertex.position.Y < kRailHeadBottom-1.0e-4f)
+            REQUIRE(across <= kRailWebHalfWidth+1.0e-5f);
+        if (vertex.position.Y > kRailHeadBottom+1.0e-4f)
+            REQUIRE(across <= kRailHeadHalfWidth+1.0e-5f);
+        highest = std::max(highest,vertex.position.Y);
+    }
+    REQUIRE(std::abs(highest-kRailHeadTop) < 1.0e-5f);
+    REQUIRE(kRailHeadHalfWidth > kRailWebHalfWidth*3.0f);
+    REQUIRE(kRailFootHalfWidth > kRailHeadHalfWidth);
 }

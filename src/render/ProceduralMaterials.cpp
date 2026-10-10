@@ -526,15 +526,18 @@ ProceduralImage makeBallastDetailImage(int size)
     ProceduralImage image{size,size,{}};
     image.pixels.resize(static_cast<std::size_t>(size*size));
 
-    // Periodic jittered cells form distinct angular-looking aggregate without storing a source
-    // bitmap. The dark nearest-cell boundary gives each stone an edge that survives close views,
-    // while the supplied mip chain converges to a calm mid-grey in the distance.
+    // Periodic jittered cells form loose angular aggregate without storing a source bitmap.
+    // Full-cell jitter varies stone size, each stone is lit across its own facet so it reads as a
+    // tilted solid rather than a flat tile, and only a thin dark crevice separates neighbours;
+    // a few stones sit lower in shadow. The mip chain still converges to a calm mid-grey.
     for (int y = 0; y < size; ++y)
         for (int x = 0; x < size; ++x)
         {
             int nearest = std::numeric_limits<int>::max();
             int second = std::numeric_limits<int>::max();
             std::uint32_t nearestHash = 0;
+            int nearestDx = 0;
+            int nearestDy = 0;
             const int baseCellX = x/cellSize;
             const int baseCellY = y/cellSize;
             for (int offsetY = -1; offsetY <= 1; ++offsetY)
@@ -543,25 +546,37 @@ ProceduralImage makeBallastDetailImage(int size)
                     const int cellX = (baseCellX+offsetX+cellCount)%cellCount;
                     const int cellY = (baseCellY+offsetY+cellCount)%cellCount;
                     const std::uint32_t hash = texelHash(cellX,cellY,0x42414c4cU);
-                    const int centreX = cellX*cellSize+2+static_cast<int>(hash%5U);
-                    const int centreY = cellY*cellSize+2+static_cast<int>((hash>>8U)%5U);
+                    const int centreX = cellX*cellSize+static_cast<int>(hash%8U);
+                    const int centreY = cellY*cellSize+static_cast<int>((hash>>8U)%8U);
                     const int dx = periodicDistance(x,centreX%size,size);
                     const int dy = periodicDistance(y,centreY%size,size);
-                    const int distanceSquared = dx*dx+dy*dy;
+                    // A slight per-stone anisotropy stretches cells so they are not all equant.
+                    const int stretch = static_cast<int>((hash>>20U)%3U);
+                    const int distanceSquared = stretch == 0 ? dx*dx*5/4+dy*dy
+                                              : stretch == 1 ? dx*dx+dy*dy*5/4 : dx*dx+dy*dy;
                     if (distanceSquared < nearest)
                     {
                         second = nearest;
                         nearest = distanceSquared;
                         nearestHash = hash;
+                        nearestDx = x-(centreX%size);
+                        nearestDy = y-(centreY%size);
                     }
                     else if (distanceSquared < second) second = distanceSquared;
                 }
-            int value = 216+static_cast<int>((nearestHash>>16U)%29U)-14;
-            if (second-nearest <= 5) value -= 48;
+            int value = 208+static_cast<int>((nearestHash>>16U)%37U)-18;
+            // Facet lighting from the upper left; the gradient direction varies per stone.
+            const int facet = static_cast<int>((nearestHash>>24U)%4U);
+            const int lightX = facet < 2 ? -1 : 1;
+            const int lightY = (facet&1) == 0 ? -1 : 1;
+            value += std::clamp((nearestDx*lightX+nearestDy*lightY)*4,-22,22);
+            if ((nearestHash>>12U)%9U == 0) value -= 34;
+            if (second-nearest <= 3) value -= 58;
+            else if (second-nearest <= 6) value -= 18;
             const std::uint32_t grit = texelHash(x,y,0x47524954U);
             value += static_cast<int>(grit%9U)-4;
-            if ((grit&0xffU) < 7U) value -= 26;
-            value = std::clamp(value,142,245);
+            if ((grit&0xffU) < 5U) value -= 22;
+            value = std::clamp(value,132,245);
             image.pixels[static_cast<std::size_t>(y*size+x)] =
                 Color(value,value,value,255);
         }

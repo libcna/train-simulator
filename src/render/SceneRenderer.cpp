@@ -3,6 +3,7 @@
 #include "trainsim/render/AvatarMotion.hpp"
 #include "trainsim/render/BridgeGeometry.hpp"
 #include "trainsim/render/TunnelGeometry.hpp"
+#include "trainsim/render/TrackGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -1109,44 +1110,60 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
         for (std::size_t trackIndex = 0; trackIndex < trackCentreCount; ++trackIndex)
         {
             const float trackCentre = trackCentres[trackIndex];
-            track.addBox(Vector3{trackCentre-2.7f,-0.39f,-halfLength},
-                         Vector3{trackCentre+2.7f,-0.09f,halfLength},
+            // The formation box stays hidden under the crown; both ballast shoulders are sloped
+            // textured quads down to a wobbling toe instead of a vertical dark curb.
+            track.addBox(Vector3{trackCentre-2.2f,-0.39f,-halfLength},
+                         Vector3{trackCentre+2.2f,-0.09f,halfLength},
                          Color(102,96,88,255), placement);
-            constexpr float kBallastTileMetres = 0.72f;
-            const Vector3 bedA = Vector3::Transform(
-                Vector3{trackCentre-2.66f,-0.084f,-halfLength},placement);
-            const Vector3 bedB = Vector3::Transform(
-                Vector3{trackCentre-2.66f,-0.084f,halfLength},placement);
-            const Vector3 bedC = Vector3::Transform(
-                Vector3{trackCentre+2.66f,-0.084f,halfLength},placement);
-            const Vector3 bedD = Vector3::Transform(
-                Vector3{trackCentre+2.66f,-0.084f,-halfLength},placement);
-            const float u0 = (trackCentre-2.66f)/kBallastTileMetres;
-            const float u1 = (trackCentre+2.66f)/kBallastTileMetres;
-            const float v0 = static_cast<float>(segmentBegin)/kBallastTileMetres;
-            const float v1 = static_cast<float>(segmentEnd)/kBallastTileMetres;
+            constexpr float kBallastTileMetres = 0.88f;
+            const Color ballastTint(132,124,113,255);
+            const auto bedUV = [&](float x,double distance) {
+                return Vector2{x/kBallastTileMetres,
+                               static_cast<float>(distance)/kBallastTileMetres};
+            };
+            const auto bedPoint = [&](float x,float y,float z) {
+                return Vector3::Transform(Vector3{x,y,z},placement);
+            };
+            const float crownLeft = trackCentre-kBallastCrownHalfWidth;
+            const float crownRight = trackCentre+kBallastCrownHalfWidth;
             trackBedMaterial.addTexturedQuad(
-                bedA,bedB,bedC,bedD,Color(132,124,113,255),
-                Vector2{u0,v0},Vector2{u0,v1},Vector2{u1,v1},Vector2{u1,v0});
+                bedPoint(crownLeft,kBallastCrownHeight,-halfLength),
+                bedPoint(crownLeft,kBallastCrownHeight,halfLength),
+                bedPoint(crownRight,kBallastCrownHeight,halfLength),
+                bedPoint(crownRight,kBallastCrownHeight,-halfLength),ballastTint,
+                bedUV(crownLeft,segmentBegin),bedUV(crownLeft,segmentEnd),
+                bedUV(crownRight,segmentEnd),bedUV(crownRight,segmentBegin));
+            const float toeBegin = ballastShoulderToe(segmentBegin);
+            const float toeEnd = ballastShoulderToe(segmentEnd);
+            const Color shoulderTint(124,117,107,255);
+            trackBedMaterial.addTexturedQuad(
+                bedPoint(trackCentre-toeBegin,kBallastToeHeight,-halfLength),
+                bedPoint(trackCentre-toeEnd,kBallastToeHeight,halfLength),
+                bedPoint(crownLeft,kBallastCrownHeight,halfLength),
+                bedPoint(crownLeft,kBallastCrownHeight,-halfLength),shoulderTint,
+                bedUV(-toeBegin,segmentBegin),bedUV(-toeEnd,segmentEnd),
+                bedUV(crownLeft,segmentEnd),bedUV(crownLeft,segmentBegin));
+            trackBedMaterial.addTexturedQuad(
+                bedPoint(crownRight,kBallastCrownHeight,-halfLength),
+                bedPoint(crownRight,kBallastCrownHeight,halfLength),
+                bedPoint(trackCentre+toeEnd,kBallastToeHeight,halfLength),
+                bedPoint(trackCentre+toeBegin,kBallastToeHeight,-halfLength),shoulderTint,
+                bedUV(crownRight,segmentBegin),bedUV(crownRight,segmentEnd),
+                bedUV(toeEnd,segmentEnd),bedUV(toeBegin,segmentBegin));
             for (float railOffset : {-0.81f, 0.71f})
             {
-                const float x = trackCentre + railOffset;
-                // A rail is not one silver bar: the broad oxidized foot supports a darker web,
-                // while only the wheel-polished running head retains a cool metallic highlight.
-                track.addBox(Vector3{x-0.025f,-0.03f,-halfLength},
-                             Vector3{x+0.125f,0.005f,halfLength},
-                             Color(91,67,53,255),placement);
-                track.addBox(Vector3{x+0.030f,0.0f,-halfLength},
-                             Vector3{x+0.070f,0.073f,halfLength},
-                             Color(104,72,54,255),placement);
+                const float x = trackCentre + railOffset + 0.05f;
+                // A rail is not one silver bar: the oxidised foot and slender web carry a broader
+                // head, and only the wheel-polished running surface keeps the metallic highlight.
+                addRailProfile(track,placement,x,halfLength);
                 const Vector3 railA = Vector3::Transform(
-                    Vector3{x-0.004f,0.094f,-halfLength},placement);
+                    Vector3{x-kRailHeadHalfWidth,kRailHeadTop+0.001f,-halfLength},placement);
                 const Vector3 railB = Vector3::Transform(
-                    Vector3{x-0.004f,0.094f,halfLength},placement);
+                    Vector3{x-kRailHeadHalfWidth,kRailHeadTop+0.001f,halfLength},placement);
                 const Vector3 railC = Vector3::Transform(
-                    Vector3{x+0.104f,0.094f,halfLength},placement);
+                    Vector3{x+kRailHeadHalfWidth,kRailHeadTop+0.001f,halfLength},placement);
                 const Vector3 railD = Vector3::Transform(
-                    Vector3{x+0.104f,0.094f,-halfLength},placement);
+                    Vector3{x+kRailHeadHalfWidth,kRailHeadTop+0.001f,-halfLength},placement);
                 railHeadMaterial.addTexturedQuad(
                     railA,railB,railC,railD,Color(166,174,173,255),
                     Vector2{0.0f,0.0f},Vector2{0.0f,1.0f},
@@ -1164,16 +1181,17 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
                 const std::size_t tone = static_cast<std::size_t>(std::abs(
                     sleeperIndex+static_cast<std::int64_t>(trackIndex)*17))
                     % sleeperTones.size();
-                track.addBox(Vector3{trackCentre-1.18f,-0.10f,-0.09f},
-                             Vector3{trackCentre+1.18f,0.0f,0.09f},
-                             sleeperTones[tone],sleeperPlacement);
                 // Broad dark baseplates and paired rust-toned elastic clips make the rail/sleeper
                 // connection legible from a nearby passenger window. Top faces are sufficient at
                 // this scale and avoid turning thousands of fasteners into box-sized geometry.
                 // Quality-scaled distance limits keep sub-pixel fittings out of the far corridor;
                 // at the largest possible 250 m anchor offset Low still retains 110 m ahead.
+                // The chamfered monoblock profile shares that radius; farther sleepers stay boxes.
                 const double sleeperDistance = midpoint+static_cast<double>(sleeper);
-                if (std::abs(sleeperDistance-anchorDistance) > fastenerRadius) continue;
+                const bool closeSleeper = std::abs(sleeperDistance-anchorDistance) <= fastenerRadius;
+                addConcreteSleeper(track,sleeperPlacement,trackCentre,sleeperTones[tone],
+                                   closeSleeper);
+                if (!closeSleeper) continue;
                 for (float railOffset : {-0.81f,0.71f})
                 {
                     const float centre = trackCentre+railOffset+0.05f;

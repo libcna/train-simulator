@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **73 addressed, 50 open**. ENV-001 through ENV-071, ENV-122 and ENV-123 have
+Current disposition: **77 addressed, 46 open**. ENV-001 through ENV-075, ENV-122 and ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -131,10 +131,10 @@ not exist. "Not visible" is limited to the cited view.
 | 069 ENV-069 | ADDRESSED | The lining is a textured precast face with 2 m ring joints, bolt pockets, longitudinal joints and a roof haunch instead of a flat slab. | tunnel |
 | 070 ENV-070 | ADDRESSED | Wall fixtures are bracketed housings with end caps and a thin lens; a seamless gradient wash on the lining gives the falloff. | tunnel |
 | 071 ENV-071 | ADDRESSED | Handrail and cable tray run on brackets with cables; every bay carries an escape-route sign with portal distance and a hectometre plate. | tunnel |
-| 072 ENV-072 | P2 | Ballast reads as a tiled cracked/cobbled surface rather than loose angular stone. Improve texture distribution and scale. | signal, track-close |
-| 073 ENV-073 | P2 | Ballast shoulder is a straight vertical dark curb. Add a sloped granular shoulder with less artificial edge. | track-close |
-| 074 ENV-074 | P2 | Sleepers have featureless rectangular faces and sharp uniform edges. Add credible concrete profile and subtle variation. | urban-left, track-close |
-| 075 ENV-075 | P2 | Rail web/head distinction is weak; long brown/grey rectangular bars dominate. Refine cross-section and steel/rust separation. | track-close, signal |
+| 072 ENV-072 | ADDRESSED | Ballast is now size-varied angular aggregate with per-stone facet lighting and thin crevices at a 0.88 m tile, no longer a cobbled grid. | signal, track-close |
+| 073 ENV-073 | ADDRESSED | Both shoulders slope from the crown to a deterministically wobbling toe in the ballast material; the formation box is hidden beneath. | track-close |
+| 074 ENV-074 | ADDRESSED | Near sleepers are chamfered monoblocks with two rail-seat blocks and a lower waist, keeping the three-tone variation; far ones stay boxes. | urban-left, track-close |
+| 075 ENV-075 | ADDRESSED | Rails have an oxidised foot, a slender web and a broader steel head with the polished running surface on top. | track-close, signal |
 | 076 ENV-076 | P2 | Lineside fences are heavy dark straight rails with abrupt cut ends. Improve wire/post scale and segment closure. | passing-train, country-near |
 | 077 ENV-077 | P2 | Signal head reads as a deep black box with weak aspect lens definition. Improve lens/hood/backboard separation at passenger angles. | signal |
 | 078 ENV-078 | P2 | Signal ladder has broad rectangular rails/rungs and a crude mast connection. Refine dimensions and attachment. | signal |
@@ -1835,4 +1835,37 @@ batches now present in the tunnel), **783,628 → 839,908** triangles, **1,750
 rings**, **68 plates**; steady mean **25.4 → 25.4 ms**, p95 **25.9 → 25.6 ms**,
 p99 **26.8 → 27.2 ms**, maximum **32.5 → 32.2 ms**; initial rebuild **17.6 →
 22.9 ms**. Prefixes: `tunnel-lining-`, `tunnel-markers-`. ENV-069, ENV-070 and
-ENV-071 are addressed; ENV-072 onward and ENV-121 remain open.
+ENV-071 are addressed.
+
+### Loose ballast, sloped shoulders, monoblock sleepers and rail section: ENV-072 to ENV-075
+
+`makeBallastDetailImage` now jitters stone centres across whole cells, stretches
+a third of them, lights each stone across its own facet from a per-stone
+direction, sinks a ninth of them into shadow and separates neighbours by a thin
+crevice instead of a broad dark boundary; the tile grew from 0.72 m to 0.88 m.
+The texture remains neutral, deterministic and mip-friendly. `TrackGeometry.hpp`
+adds the cross-sections: the formation box is narrowed under the crown and both
+shoulders are sloped textured quads from the 2.66 m crown edge down to a toe
+whose lateral wobbles deterministically between 3.1 and 3.6 m, so consecutive 6 m
+segments meet without a ruled edge. Sleepers inside the existing fastener radius
+are chamfered monoblocks (two rail-seat blocks on a lower, narrower waist, 90
+indices instead of 36); farther sleepers remain single boxes. Each rail is a
+broad oxidised foot, a 18 mm web and a 72 mm head rising to 148 mm, with the
+specular running-surface quad on top of the head.
+
+Inspected matched [track close before](../build/visual-audit/track-surface-track-close-before.png) /
+[after](../build/visual-audit/track-surface-track-close-after.png),
+[shoulder before](../build/visual-audit/track-surface-shoulder-before.png) /
+[after](../build/visual-audit/track-surface-shoulder-after.png), the along-track
+view with both running lines and the signal view. The stones read as loose
+angular aggregate, the dark curb is replaced by a graded shoulder, sleepers show
+lit tops and shaded chamfers, and the rail reads as a section with a bright head
+over a dark web. Three new unit tests cover the toe bounds/continuity, the
+sleeper envelope, chamfer and outward normals, and the rail profile widths; the
+ballast material test still passes. 600-frame rural sample: **94 draws
+unchanged**, **1,313,118 → 1,392,266** triangles (sleeper profiles and
+shoulders; ballast material **1,336 → 4,008**); steady mean **25.4 → 25.5 ms**,
+p95 **25.7 → 26.3 ms**, p99 **25.9 → 26.7 ms**, maximum **26.3 → 27.2 ms**;
+initial rebuild **189.4 → 134.6 ms** (run-to-run variation, not a claimed
+speedup). Prefix: `track-surface-`. ENV-072 to ENV-075 are addressed; ENV-076
+onward and ENV-121 remain open.

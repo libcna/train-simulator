@@ -44,6 +44,12 @@ escape-route sign (direction and distance to the nearer portal from
 `Sim::kTunnelExtentsMetres`) and a hectometre plate in the printed-text batch.
 `tunnel_lining_rings` and `tunnel_marker_plates` expose the populations.
 
+`TrackGeometry.hpp` holds the permanent-way cross-sections used by the 2 km
+track batch: the ballast toe wobble, the chamfered monoblock sleeper (detailed
+inside the fastener radius, a box beyond it) and the foot/web/head rail profile
+under the specular running-surface quad. Ballast shoulders are sloped textured
+quads in the ballast material; the formation box is hidden under the crown.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed
