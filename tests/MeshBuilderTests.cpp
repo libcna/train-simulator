@@ -3790,3 +3790,34 @@ TEST_CASE("toilet mirror gradient is paler toward the ceiling")
     }
     REQUIRE(topLuma > bottomLuma+100);
 }
+
+TEST_CASE("ceiling diffuser keeps its footprint with slats recessed behind a proud frame")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder mesh;
+    addCeilingDiffuser(mesh,0.56f,-34.2f);
+    const std::uint32_t slat = Color(160,168,167,255).getPackedValueProperty();
+    const std::uint32_t trim = Color(188,195,194,255).getPackedValueProperty();
+    float lowestTrim = 3.0f,lowestSlat = 3.0f,highest = 0.0f;
+    int slatVertices = 0;
+    for (const auto& vertex : mesh.data().vertices)
+    {
+        REQUIRE(std::abs(vertex.position.X-0.56f) <= 0.20f+1.0e-5f);
+        REQUIRE(std::abs(vertex.position.Z+34.2f) <= 0.34f+1.0e-5f);
+        REQUIRE(vertex.position.Y >= 2.796f-1.0e-5f);
+        REQUIRE(vertex.position.Y <= 2.834f+1.0e-5f);
+        highest = std::max(highest,vertex.position.Y);
+        if (vertex.color == trim) lowestTrim = std::min(lowestTrim,vertex.position.Y);
+        if (vertex.color == slat)
+        {
+            ++slatVertices;
+            lowestSlat = std::min(lowestSlat,vertex.position.Y);
+        }
+    }
+    REQUIRE(slatVertices == 7*2*4);
+    REQUIRE(lowestTrim < lowestSlat);
+    // Slats must face the saloon below: every slat normal points downward.
+    for (const auto& vertex : mesh.data().vertices)
+        if (vertex.color == slat) REQUIRE(vertex.normal.Y < -0.5f);
+    REQUIRE(highest > 2.829f);
+}

@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **106 addressed, 17 open**. ENV-001 through ENV-104, ENV-122 and ENV-123 have
+Current disposition: **107 addressed, 16 open**. ENV-001 through ENV-104 and ENV-121 through ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -164,7 +164,7 @@ not exist. "Not visible" is limited to the cited view.
 | 102 ENV-102 | ADDRESSED | The soap dispenser has a sight window, push plate and nozzle; a towel dispenser with slot and hanging towel sits beside it. | sink |
 | 103 ENV-103 | ADDRESSED | The drain is a chrome strainer ring with a dark outlet. | sink |
 | 104 ENV-104 | ADDRESSED | A brushed threshold plate with short ramps and a seal line joins the compartment floor to the vestibule floor. | sink |
-| 104b ENV-121 | P3 | Close ceiling HVAC grilles are thick featureless blocks with rectangular dark slots and no finished service frame. Refine the grille profile, louvres and attachment cues. New finding, queued with close-inspection fittings. | ceiling-fixture-ceiling-before, ceiling-fixture-ceiling-after |
+| 104b ENV-121 | ADDRESSED | Diffusers are a proud trim frame with corner fasteners around a recessed dark plenum, angled light slats with visible gaps and a centre divider. | hvac-grille-ceiling-before, hvac-grille-ceiling-after |
 | 105 ENV-105 | P4 | Own-train side is mostly plain grey horizontal bands without a coherent exterior livery. Design an original service identity. | train-side |
 | 106 ENV-106 | P4 | Own-train bogies/wheels are not visible beneath the body, which appears to sit directly on a black strip. Model recognizable running gear. | train-side, train-front |
 | 107 ENV-107 | P4 | Own-train underframe has no visible equipment distribution. Add restrained battery/electrical/brake enclosures. | train-side |
@@ -1970,4 +1970,24 @@ mirror gradient is paler toward the ceiling. 600-frame seated car 4 sample:
 **94 draws unchanged**, **1,432,962 → 1,433,892** triangles; steady mean
 **25.4 → 25.4 ms**, p95 **25.9 → 26.1 ms**, p99 **26.2 → 26.3 ms**, maximum
 **36.7 → 30.5 ms**. Prefix: `toilet-fittings-`. ENV-093 to ENV-104 are
-addressed; ENV-105 onward and ENV-121 remain open.
+addressed.
+
+### Ceiling HVAC diffusers: ENV-121
+
+`addCeilingDiffuser` in `InteriorFittingsGeometry.hpp` replaces the thick
+block with dark slots: a 22 mm trim frame stands 8 mm below the ceiling with a
+fastener at each corner and a centre divider, the plenum is a dark recess
+behind the ceiling plane, and fourteen angled light-toned slats lean from the
+plenum toward the frame plane with visible gaps between them. The first build
+wound the slats upward and they were invisible from the saloon; the unit test
+now requires every slat normal to point down. The footprint, the `hvac_vents`
+count and the shared interior batch are unchanged.
+
+Inspected matched [ceiling before](../build/visual-audit/hvac-grille-ceiling-before.png) /
+[after](../build/visual-audit/hvac-grille-ceiling-after.png) and the `hvac-close-`
+pair of close and oblique diffuser views captured with the same before binary.
+Unit tests: **172/172**; whole suite **67/67, 122.69 s**. 600-frame seated car 2
+sample: **92 draws unchanged**, **1,433,508 → 1,434,132** triangles; steady mean
+**25.4 → 25.5 ms**, p95 **25.8 → 25.8 ms**, p99 **26.1 → 26.0 ms**, maximum
+**26.3 → 26.4 ms**. Prefixes: `hvac-grille-`, `hvac-close-`. ENV-121 is
+addressed; ENV-105 to ENV-120 remain open.

@@ -2,6 +2,7 @@
 
 #include "trainsim/render/MeshBuilder.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace TrainSim::Render {
@@ -208,6 +209,45 @@ inline void addGrabRailEnds(MeshBuilder& mesh,float x,float z,float bottom,float
                     static_cast<int>(metal.getBProperty()*0.9f),255);
     mesh.addEllipsoid(Vector3{x,top,z},Vector3{radius*1.08f,radius*0.9f,radius*1.08f},10,4,cap,true);
     mesh.addEllipsoid(Vector3{x,bottom,z},Vector3{radius*1.08f,radius*0.9f,radius*1.08f},10,4,cap,true);
+}
+
+// Ceiling HVAC diffuser: a proud trim frame around a recessed dark plenum, angled light-toned
+// slats with visible gaps, a centre divider and corner fasteners, instead of a thick block
+// with dark slots. Coordinates are train-local; the ceiling face is at y 2.806.
+inline void addCeilingDiffuser(MeshBuilder& mesh,float x,float z)
+{
+    using namespace Microsoft::Xna::Framework;
+    const Color trim(188,195,194,255),slat(160,168,167,255),plenum(44,52,54,255);
+    const Color fastener(96,104,104,255);
+    constexpr float halfX=0.20f,halfZ=0.34f,face=2.806f;
+    // Dark recessed plenum behind the slats, then the trim frame standing 8 mm below the ceiling.
+    mesh.addBox(Vector3{x-halfX+0.02f,face+0.014f,z-halfZ+0.02f},
+                Vector3{x+halfX-0.02f,face+0.028f,z+halfZ-0.02f},plenum);
+    for (const auto& [x0,x1,z0,z1] : {
+             std::array{x-halfX,x-halfX+0.022f,z-halfZ,z+halfZ},
+             std::array{x+halfX-0.022f,x+halfX,z-halfZ,z+halfZ},
+             std::array{x-halfX,x+halfX,z-halfZ,z-halfZ+0.022f},
+             std::array{x-halfX,x+halfX,z+halfZ-0.022f,z+halfZ}})
+        mesh.addBox(Vector3{x0,face-0.008f,z0},Vector3{x1,face+0.016f,z1},trim);
+    mesh.addBox(Vector3{x-0.009f,face-0.004f,z-halfZ+0.02f},Vector3{x+0.009f,face+0.016f,z+halfZ-0.02f},
+                trim);
+    // Angled slats: each strip leans from the plenum down toward the trim plane.
+    for (int louvre=-3;louvre<=3;++louvre)
+    {
+        const float cz=z+static_cast<float>(louvre)*0.080f;
+        for (float side : {-1.0f,1.0f})
+        {
+            const float xa=side<0 ? x-halfX+0.022f : x+0.009f;
+            const float xb=side<0 ? x-0.009f : x+halfX-0.022f;
+            // Wound so the visible face points down into the saloon.
+            mesh.addQuad(Vector3{xb,face+0.014f,cz-0.028f},Vector3{xb,face-0.002f,cz+0.024f},
+                         Vector3{xa,face-0.002f,cz+0.024f},Vector3{xa,face+0.014f,cz-0.028f},slat);
+        }
+    }
+    for (float fx : {x-halfX+0.011f,x+halfX-0.011f})
+        for (float fz : {z-halfZ+0.011f,z+halfZ-0.011f})
+            mesh.addBox(Vector3{fx-0.006f,face-0.010f,fz-0.006f},Vector3{fx+0.006f,face-0.008f,fz+0.006f},
+                        fastener);
 }
 
 } // namespace TrainSim::Render

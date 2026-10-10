@@ -6383,18 +6383,7 @@ void SceneRenderer::buildInterior()
         for (const std::pair<float,float>& vent : {
                  std::pair{-0.56f,2.70f}, std::pair{0.56f,-2.70f}})
         {
-            const float ventX = vent.first;
-            const float ventZ = centre + vent.second;
-            mesh.addBox(Vector3{ventX-0.20f,2.806f,ventZ-0.34f},
-                        Vector3{ventX+0.20f,2.834f,ventZ+0.34f},
-                        Color(162,169,168,255));
-            for (int louvre = -3; louvre <= 3; ++louvre)
-            {
-                const float z = ventZ + static_cast<float>(louvre)*0.080f;
-                mesh.addBox(Vector3{ventX-0.145f,2.796f,z-0.013f},
-                            Vector3{ventX+0.145f,2.808f,z+0.013f},
-                            Color(60,72,74,255));
-            }
+            addCeilingDiffuser(mesh,vent.first,centre+vent.second);
             ++hvacVentCount_;
         }
 

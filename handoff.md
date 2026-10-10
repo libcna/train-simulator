@@ -7,7 +7,7 @@ Updated: 2026-10-10. Repository: `libcna/train-simulator`, branch `main`.
 On 2026-10-09 the owner asked to finish the river-bank repair, write this
 English handoff, commit, push and stop. On 2026-10-10 the owner asked to resume
 from this document and continue the visual work until all findings are done;
-ENV-067 through ENV-104 were repaired so far in that session. Treat each session's instruction as its own scope. The owner manages the application goal;
+ENV-067 through ENV-104 and ENV-121 were repaired so far in that session. Treat each session's instruction as its own scope. The owner manages the application goal;
 do not block implementation on the goal service or create/change goals implicitly.
 
 ## What this project is
@@ -163,8 +163,9 @@ they do not establish movement, physical mouse input or audio correctness.
 Latest evidence prefixes: `terminal-forecourt-`, `water-surface-`, `lake-bank-`,
 `river-bank-`, `bridge-parapet-`, `viaduct-valley-`, `tunnel-lining-`,
 `tunnel-markers-`, `track-surface-`, `lineside-`, `interior-fittings-`,
-`interior-close-` and `toilet-fittings-` (`ToiletGeometry.hpp`,
-`tools/capture_toilet_detail.sh`). The terminal's comparable before benchmark is specifically
+`interior-close-`, `toilet-fittings-` (`ToiletGeometry.hpp`,
+`tools/capture_toilet_detail.sh`), `hvac-grille-` and `hvac-close-`
+(`addCeilingDiffuser`, `tools/capture_hvac_detail.sh`). The terminal's comparable before benchmark is specifically
 `terminal-forecourt-terminal-performance-before.log`; the earlier similarly
 named baseline measured Stonebridge and is not comparable. The lake's
 `far-bank-before` camera lay below the old coarse terrain and was excluded from
@@ -172,9 +173,8 @@ acceptance; use the valid near-bank, passenger and oblique pairs.
 
 ## Remaining risks and next work after a new owner request
 
-1. Continue the ranked visual audit with the HVAC grilles ENV-121, then the
-   exterior train shell/equipment ENV-105 to ENV-119 and the terminal
-   composition ENV-120. ENV-121 remains open. ENV-120 is the broader terminal
+1. Continue the ranked visual audit with the exterior train shell/equipment
+   ENV-105 to ENV-119 and the terminal composition ENV-120. ENV-121 remains open. ENV-120 is the broader terminal
    composition, not closed merely by the forecourt repair.
 2. The owner reported an intermittent physical-mouse camera freeze. It remains
    unresolved/not reproduced by the latest visual work. Automated interaction
@@ -193,15 +193,15 @@ Do not infer that the entire campaign is done from a clean Git tree.
 
 ## Final verification and disposition
 
-- **106 addressed / 17 open / 123 total findings.** ENV-001 through ENV-104,
-  ENV-122 and ENV-123 have evidence; ENV-105 through ENV-120 and ENV-121 remain.
+- **107 addressed / 16 open / 123 total findings.** ENV-001 through ENV-104 and
+  ENV-121 through ENV-123 have evidence; ENV-105 through ENV-120 remain.
 - Final incremental build succeeded with shared system ccache and four workers.
   During the session the sibling `sharp-runtime` checkout was briefly being
   edited by someone else and failed to compile; it recovered on its own and was
   not touched from this project.
 - Each repair's whole CTest run on its final binary is logged as
-  `build/visual-audit/<prefix>-full-tests.log` (latest: `toilet-fittings-`,
-  67/67). Render unit tests: 171/171 after the toilet work.
+  `build/visual-audit/<prefix>-full-tests.log` (latest: `hvac-grille-`,
+  67/67). Render unit tests: 172/172 after the HVAC work.
 - Final actual GPU screenshots were inspected for every repair, matched against
   preserved before images; see the audit's evidence sections and prefixes.
 - The latest 600-frame tunnel sample: **87 → 89 draws**, **783,628 → 839,908
