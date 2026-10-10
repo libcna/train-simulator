@@ -124,6 +124,8 @@ struct RenderStats
     int roadVehicles = 0;
     int tunnelLuminaires = 0;
     int tunnelSafetyNiches = 0;
+    int tunnelLiningRings = 0;
+    int tunnelMarkerPlates = 0;
     int bridgeSections = 0;
     int riverBridgeSections = 0;
     int viaductSections = 0;
@@ -379,6 +381,8 @@ private:
     int staticWorldLinesideEquipmentCabinets_ = 0;
     int staticWorldTunnelLuminaires_ = 0;
     int staticWorldTunnelSafetyNiches_ = 0;
+    int staticWorldTunnelLiningRings_ = 0;
+    int staticWorldTunnelMarkerPlates_ = 0;
     int staticWorldBridgeSections_ = 0;
     int staticWorldRiverBridgeSections_ = 0;
     int staticWorldViaductSections_ = 0;

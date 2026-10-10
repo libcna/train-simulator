@@ -578,7 +578,7 @@ if(TRAINSIM_BUILD_TESTS)
         set_tests_properties(trainsim_tunnel_environment_smoke PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy"
             PASS_REGULAR_EXPRESSION
-                "river_water_sections=0.*tunnel_luminaires=[1-9][0-9]* tunnel_niches=[1-9][0-9]* bridge_sections=0 river_bridge_sections=0 viaduct_sections=0 bridge_abutments=0.*sunlight_patches=0.*tunnel_audio=1 bridge_audio=0"
+                "river_water_sections=0.*tunnel_luminaires=[1-9][0-9]* tunnel_niches=[1-9][0-9]* bridge_sections=0 river_bridge_sections=0 viaduct_sections=0 bridge_abutments=0.*sunlight_patches=0.*tunnel_audio=1 bridge_audio=0.*tunnel_lining_rings=[1-9][0-9]* tunnel_marker_plates=[1-9][0-9]*"
             TIMEOUT 30)
         add_test(NAME trainsim_river_bank_smoke
             COMMAND train-simulator --frames 3 --route-km 74.5 --window-view --quality 1

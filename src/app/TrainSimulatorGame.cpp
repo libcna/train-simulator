@@ -680,7 +680,9 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " facade_shader_draws=" << renderStats_.facadeShaderDraws
                   << " water_shader_draws=" << renderStats_.waterShaderDraws
                   << " river_bank_clumps=" << renderStats_.riverBankClumps
-                  << " bridge_parapet_posts=" << renderStats_.bridgeParapetPosts << '\n';
+                  << " bridge_parapet_posts=" << renderStats_.bridgeParapetPosts
+                  << " tunnel_lining_rings=" << renderStats_.tunnelLiningRings
+                  << " tunnel_marker_plates=" << renderStats_.tunnelMarkerPlates << '\n';
     }
 }
 

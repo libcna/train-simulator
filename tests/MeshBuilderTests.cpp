@@ -11,6 +11,7 @@
 #include "trainsim/render/WaterSurface.hpp"
 #include "trainsim/render/ShoreGeometry.hpp"
 #include "trainsim/render/BridgeGeometry.hpp"
+#include "trainsim/render/TunnelGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3368,4 +3369,108 @@ TEST_CASE("bridge parapet replaces broad beams with a bounded post and rail asse
         }
         REQUIRE(std::abs(highest-(kBridgeHandrailHeight+kBridgeHandrailRadius)) < 1.0e-3f);
     }
+}
+
+TEST_CASE("tunnel escape and chainage labels name the nearer portal and hectometre")
+{
+    using namespace TrainSim::Render;
+    REQUIRE(!tunnelExtentAt(120'999.0).has_value());
+    REQUIRE(!tunnelExtentAt(177'900.0).has_value());
+    const auto longTunnel = tunnelExtentAt(123'000.0);
+    REQUIRE(longTunnel.has_value());
+    REQUIRE(longTunnel->first == 121'000.0);
+    REQUIRE(longTunnel->second == 126'800.0);
+    REQUIRE(tunnelExitLabel(123'000.0,121'000.0,126'800.0) == "< 2.0 KM");
+    REQUIRE(tunnelExitLabel(126'000.0,121'000.0,126'800.0) == "800 M >");
+    REQUIRE(tunnelExitLabel(121'340.0,121'000.0,126'800.0) == "< 340 M");
+    REQUIRE(tunnelExitLabel(230'300.0,229'500.0,231'100.0) == "< 800 M");
+    REQUIRE(tunnelExitLabel(230'400.0,229'500.0,231'100.0) == "700 M >");
+    REQUIRE(tunnelChainageLabel(123'000.0) == "123.0");
+    REQUIRE(tunnelChainageLabel(123'499.0) == "123.4");
+    REQUIRE(tunnelChainageLabel(229'500.0) == "229.5");
+}
+
+namespace {
+struct TunnelTestPoint { float x,y,z,yaw; };
+TunnelTestPoint tunnelTestPoint(double distance,double lateral)
+{
+    return {static_cast<float>(lateral),0.0f,static_cast<float>(distance),0.0f};
+}
+}
+
+TEST_CASE("tunnel lining segments stay on their wall face and look toward the track")
+{
+    using namespace TrainSim::Render;
+    for (const auto [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
+    {
+        MeshBuilder structure;
+        MeshBuilder lining;
+        const int rings = addTunnelLiningSegment(structure,lining,tunnelTestPoint,40.0,60.0,
+                                                 face,inward,true,tunnelLiningStyle());
+        REQUIRE(rings == 10);
+        MeshBuilder lowStructure;
+        MeshBuilder lowLining;
+        REQUIRE(addTunnelLiningSegment(lowStructure,lowLining,tunnelTestPoint,40.0,60.0,
+                                       face,inward,false,tunnelLiningStyle()) == 10);
+        REQUIRE(lowStructure.data().indices.size() < structure.data().indices.size());
+        for (const MeshBuilder* builder : {&structure,&lining})
+        {
+            const auto& mesh = builder->data();
+            REQUIRE(!mesh.empty());
+            for (const auto& vertex : mesh.vertices)
+            {
+                const float inboard = (vertex.position.X-static_cast<float>(face))*inward;
+                REQUIRE(inboard >= 0.0f);
+                REQUIRE(inboard <= 0.56f);
+                REQUIRE(vertex.position.Y >= kTunnelLiningBottom-1.0e-4f);
+                REQUIRE(vertex.position.Y <= 6.78f+1.0e-4f);
+                REQUIRE(vertex.position.Z >= 39.9f);
+                REQUIRE(vertex.position.Z <= 60.1f);
+                REQUIRE(vertex.normal.X*inward > 0.2f);
+            }
+        }
+        // The textured face tiles the shared concrete material at a readable panel scale.
+        bool tiled = false;
+        for (const auto& vertex : lining.data().vertices)
+            tiled = tiled || vertex.textureCoordinate.X > 30.0f;
+        REQUIRE(tiled);
+    }
+}
+
+TEST_CASE("tunnel wall luminaire has a thin lens and a seamless centred wash")
+{
+    using namespace TrainSim::Render;
+    const double face = 3.925;
+    const float inward = -1.0f;
+    MeshBuilder structure;
+    MeshBuilder lining;
+    MeshBuilder emitter;
+    addTunnelWallLuminaire(structure,lining,emitter,tunnelTestPoint,50.0,face,inward,
+                           tunnelLiningStyle());
+    REQUIRE(!structure.data().empty());
+    for (const auto& vertex : emitter.data().vertices)
+    {
+        const float inboard = (vertex.position.X-static_cast<float>(face))*inward;
+        REQUIRE(inboard >= 0.01f);
+        REQUIRE(inboard <= 0.28f);
+        REQUIRE(std::abs(vertex.position.Z-50.0f) <= 0.50f);
+    }
+    const auto wash = lining.data();
+    REQUIRE(wash.vertices.size() == 16);
+    const std::uint32_t liningColour = tunnelLiningStyle().lining.getPackedValueProperty();
+    int centreVertices = 0;
+    for (const auto& vertex : wash.vertices)
+    {
+        const bool centre = std::abs(vertex.position.Z-50.0f) < 1.0e-4f
+                         && std::abs(vertex.position.Y-kTunnelLuminaireHeight) < 1.0e-4f;
+        if (centre) ++centreVertices;
+        else REQUIRE(vertex.color == liningColour);
+        REQUIRE(std::abs(vertex.position.Z-50.0f) <= 1.9f+1.0e-4f);
+        REQUIRE(vertex.normal.X*inward > 0.99f);
+    }
+    REQUIRE(centreVertices == 4);
+    for (const auto& vertex : wash.vertices)
+        if (std::abs(vertex.position.Z-50.0f) < 1.0e-4f
+            && std::abs(vertex.position.Y-kTunnelLuminaireHeight) < 1.0e-4f)
+            REQUIRE(vertex.color != liningColour);
 }

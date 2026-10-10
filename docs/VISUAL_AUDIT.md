@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **70 addressed, 53 open**. ENV-001 through ENV-068, ENV-122 and ENV-123 have
+Current disposition: **73 addressed, 50 open**. ENV-001 through ENV-071, ENV-122 and ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -128,9 +128,9 @@ not exist. "Not visible" is limited to the cited view.
 | 066 ENV-066 | ADDRESSED | Bright water streaks are long isolated straight lines, conspicuous as graphics. Refine highlights into coherent surface response. | river-bridge |
 | 067 ENV-067 | ADDRESSED | Both crossings now have a concrete upstand with coping and drip line, a cable trough and a slender tubular two-rail handrail on posts instead of stacked flat beams. | river-bridge, viaduct |
 | 068 ENV-068 | ADDRESSED | The viaduct crosses a bowl-shaped valley with rising spurs and tall footed, tied piers rather than a uniformly sunken plain. | viaduct |
-| 069 ENV-069 | P2 | Tunnel wall is a near-uniform dark slab without lining joints or material scale. Add restrained lining construction. | tunnel |
-| 070 ENV-070 | P2 | Tunnel lamp appears as a bright rectangle in a large flat patch. Improve fixture depth and light falloff. | tunnel |
-| 071 ENV-071 | P2 | Tunnel service strips/markers are broad unlabelled lines and blocks. Give them recognizable railway utility meaning. | tunnel |
+| 069 ENV-069 | ADDRESSED | The lining is a textured precast face with 2 m ring joints, bolt pockets, longitudinal joints and a roof haunch instead of a flat slab. | tunnel |
+| 070 ENV-070 | ADDRESSED | Wall fixtures are bracketed housings with end caps and a thin lens; a seamless gradient wash on the lining gives the falloff. | tunnel |
+| 071 ENV-071 | ADDRESSED | Handrail and cable tray run on brackets with cables; every bay carries an escape-route sign with portal distance and a hectometre plate. | tunnel |
 | 072 ENV-072 | P2 | Ballast reads as a tiled cracked/cobbled surface rather than loose angular stone. Improve texture distribution and scale. | signal, track-close |
 | 073 ENV-073 | P2 | Ballast shoulder is a straight vertical dark curb. Add a sloped granular shoulder with less artificial edge. | track-close |
 | 074 ENV-074 | P2 | Sleepers have featureless rectangular faces and sharp uniform edges. Add credible concrete profile and subtle variation. | urban-left, track-close |
@@ -1800,4 +1800,39 @@ repair was present. 600-frame viaduct sample (both repairs): steady mean
 rebuild **139.5 ms**; triangle and draw counts match the parapet run. These are
 compositor-paced stationary measurements, not moving-world evidence. Whole
 suite after the final build: **67/67, 105.79 s**. Prefix:
-`viaduct-valley-`. ENV-068 is addressed; ENV-069 onward and ENV-121 remain open.
+`viaduct-valley-`. ENV-068 is addressed.
+
+### Precast tunnel lining, wall fixtures and utility markers: ENV-069 / ENV-070 / ENV-071
+
+The tunnel walls were plain lit boxes with a 20 m joint, a bright rectangle
+in a dark patch every 10 m and two unlabelled bars. `TunnelGeometry.hpp` now
+adds, per 20 m structural segment and wall, a textured precast face in the
+streamed concrete material (1.6 m tiling), a roof haunch, two longitudinal
+joints and absolute 2 m ring joints with Medium/High bolt pockets;
+`tunnel_lining_rings` counts them. Each luminaire is a bracketed housing with
+end caps and a thin emitter lens; its wall wash is four gradient quads in the
+same textured batch whose outer colour equals the lining tint, so the falloff
+has no visible seam. The handrail and cable tray are lit steel on 4 m brackets
+with two cable runs. Every 100 m niche bay now carries a green escape-route
+sign giving the direction and distance to the nearer portal (computed from the
+authored extents exported by `Route.hpp`) and a hectometre plate, both in the
+antialiased printed-text batch; `tunnel_marker_plates` counts them. The first
+build printed the labels as pixel boxes and cost 108k triangles; flat printed
+glyphs were substituted before acceptance.
+
+Inspected matched [window before](../build/visual-audit/tunnel-lining-window-before.png) /
+[after](../build/visual-audit/tunnel-lining-window-after.png), left window,
+[fixture close before](../build/visual-audit/tunnel-lining-fixture-close-before.png) /
+[after](../build/visual-audit/tunnel-lining-fixture-close-after.png), the
+along-wall view and, under the `tunnel-markers-` prefix captured with the
+same before binary, the [123.0 km bay before](../build/visual-audit/tunnel-markers-niche-bay-before.png) /
+[after](../build/visual-audit/tunnel-markers-niche-bay-after.png), its left-wall
+twin and an oblique. The escape sign reads "< 2.0 KM" at that bay. Three new
+unit tests cover label/extent logic, lining envelope and orientation, and the
+lens/wash construction; the tunnel environment smoke now requires both
+counters. 600-frame tunnel sample: **87 → 89 draws** (concrete and printed
+batches now present in the tunnel), **783,628 → 839,908** triangles, **1,750
+rings**, **68 plates**; steady mean **25.4 → 25.4 ms**, p95 **25.9 → 25.6 ms**,
+p99 **26.8 → 27.2 ms**, maximum **32.5 → 32.2 ms**; initial rebuild **17.6 →
+22.9 ms**. Prefixes: `tunnel-lining-`, `tunnel-markers-`. ENV-069, ENV-070 and
+ENV-071 are addressed; ENV-072 onward and ENV-121 remain open.

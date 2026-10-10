@@ -2,6 +2,7 @@
 
 #include "trainsim/render/AvatarMotion.hpp"
 #include "trainsim/render/BridgeGeometry.hpp"
+#include "trainsim/render/TunnelGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -1376,6 +1377,8 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
     staticWorldLinesideEquipmentCabinets_ = 0;
     staticWorldTunnelLuminaires_ = 0;
     staticWorldTunnelSafetyNiches_ = 0;
+    staticWorldTunnelLiningRings_ = 0;
+    staticWorldTunnelMarkerPlates_ = 0;
     staticWorldBridgeSections_ = 0;
     staticWorldRiverBridgeSections_ = 0;
     staticWorldViaductSections_ = 0;
@@ -2185,6 +2188,10 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                1.4f,6.0f,1.0f,side.yaw,Color(103,99,89,255));
             }
         };
+        const TunnelLiningStyle tunnelStyle = tunnelLiningStyle();
+        const auto tunnelPoint = [&](double distance,double lateral) {
+            return localRoutePoint(route,anchorDistance,distance,lateral);
+        };
         for (double tunnelBegin = chunk.beginDistance; tunnelBegin < chunk.endDistance;
              tunnelBegin += 20.0)
         {
@@ -2223,25 +2230,15 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                Color(194,193,166,255));
             }
 
-            // A narrow expansion joint at every segment boundary supplies a strong speed cue from
-            // a square side-window view without requiring a texture or another submission.
-            for (double lateral : {3.90, -8.90})
+            // Precast lining with ring and longitudinal joints, a roof haunch, handrail and
+            // cable tray on brackets. The textured face shares the streamed concrete material.
+            for (const auto [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
             {
-                const LocalRoutePoint joint = localRoutePoint(
-                    route,anchorDistance,tunnelBegin,lateral);
-                addOrientedBox(mesh,joint.x,joint.y+3.45f,joint.z,
-                               0.11f,5.85f,0.10f,joint.yaw,Color(57,58,55,255));
-            }
-            for (double lateral : {3.86, -8.86})
-            {
-                const LocalRoutePoint cableTray = localRoutePoint(
-                    route, anchorDistance, tunnelMiddle, lateral);
-                addOrientedBox(worldLuminaires,cableTray.x,cableTray.y+1.28f,cableTray.z,
-                               0.10f,0.12f,tunnelLength,cableTray.yaw,
-                               Color(148,171,153,255));
-                addOrientedBox(worldLuminaires,cableTray.x,cableTray.y+3.16f,cableTray.z,
-                               0.10f,0.045f,tunnelLength,cableTray.yaw,
-                               Color(119,126,107,255));
+                staticWorldTunnelLiningRings_ += addTunnelLiningSegment(
+                    mesh,platformMaterial,tunnelPoint,tunnelBegin,tunnelEnd,face,inward,
+                    graphicsQuality_>0,tunnelStyle);
+                addTunnelServiceRuns(mesh,tunnelPoint,tunnelBegin,tunnelEnd,face,inward,
+                                     tunnelStyle);
             }
             if (!route.sample(std::max(0.0, tunnelBegin - 0.1)).tunnel)
                 addTunnelPortal(tunnelBegin);
@@ -2298,6 +2295,27 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     route,anchorDistance,nicheDistance+1.31,faceLateral-side*0.12);
                 addOrientedBox(worldLuminaires,handle.x,handle.y+1.18f,handle.z,
                                0.06f,0.08f,0.05f,handle.yaw,Color(241,218,175,255));
+
+                // Every bay carries railway utility text: an escape-route sign giving the
+                // direction and distance to the nearer portal, and a hectometre plate.
+                const double liningFace = side > 0.0 ? 3.925 : -8.925;
+                const float inward = side > 0.0 ? -1.0f : 1.0f;
+                if (const auto extent = tunnelExtentAt(nicheDistance))
+                {
+                    addTunnelWallPlate(mesh,tunnelPoint,nicheDistance+2.75,liningFace,inward,
+                                       2.20f,0.78f,0.30f,Color(32,112,72,255));
+                    addRoutePrintedText(stationLettering,route,anchorDistance,
+                        tunnelExitLabel(nicheDistance,extent->first,extent->second),
+                        nicheDistance+2.75,liningFace+inward*0.06,2.13f,
+                        Color(236,246,232,255),0.66f);
+                    ++staticWorldTunnelMarkerPlates_;
+                }
+                addTunnelWallPlate(mesh,tunnelPoint,nicheDistance-2.75,liningFace,inward,
+                                   2.20f,0.46f,0.26f,Color(228,228,218,255));
+                addRoutePrintedText(stationLettering,route,anchorDistance,
+                    tunnelChainageLabel(nicheDistance),nicheDistance-2.75,
+                    liningFace+inward*0.06,2.14f,Color(28,30,30,255),0.38f);
+                ++staticWorldTunnelMarkerPlates_;
             }
         }
 
@@ -2321,17 +2339,9 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
 
             // Both running lines share this broad tunnel. Wall-mounted fixtures ensure that a
             // passenger looking squarely through either side window sees depth and speed cues.
-            for (double lateral : {3.86, -8.86})
-            {
-                const LocalRoutePoint wall = localRoutePoint(
-                    route, anchorDistance, luminaireDistance, lateral);
-                addOrientedBox(worldLuminaires,wall.x,wall.y+2.92f,wall.z,
-                               0.10f,0.58f,1.00f,wall.yaw,Color(73,72,62,255));
-                addOrientedBox(worldLuminaires,wall.x,wall.y+3.04f,wall.z,
-                               0.12f,0.14f,0.34f,wall.yaw,Color(247,222,160,255));
-                addOrientedBox(worldLuminaires,wall.x,wall.y+1.10f,wall.z,
-                               0.13f,0.13f,0.28f,wall.yaw,Color(184,207,181,255));
-            }
+            for (const auto [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
+                addTunnelWallLuminaire(mesh,platformMaterial,worldLuminaires,tunnelPoint,
+                                       luminaireDistance,face,inward,tunnelStyle);
         }
 
         // Sample long crossings at a 20 m cadence rather than quantizing their deck and rails to
@@ -8618,6 +8628,8 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     stats.linesideEquipmentCabinets = staticWorldLinesideEquipmentCabinets_;
     stats.tunnelLuminaires = staticWorldTunnelLuminaires_;
     stats.tunnelSafetyNiches = staticWorldTunnelSafetyNiches_;
+    stats.tunnelLiningRings = staticWorldTunnelLiningRings_;
+    stats.tunnelMarkerPlates = staticWorldTunnelMarkerPlates_;
     stats.bridgeSections = staticWorldBridgeSections_;
     stats.riverBridgeSections = staticWorldRiverBridgeSections_;
     stats.viaductSections = staticWorldViaductSections_;

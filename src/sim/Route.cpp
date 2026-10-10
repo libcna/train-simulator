@@ -126,8 +126,8 @@ RoutePose Route::sample(double distanceMetres) const noexcept
         urbanity = std::max(urbanity, std::exp(-d * d) * (station.major ? 1.0 : 0.62));
     }
 
-    const bool longTunnel = s > 121'000.0 && s < 126'800.0;
-    const bool shortTunnel = s > 229'500.0 && s < 231'100.0;
+    const bool longTunnel = s > kTunnelExtentsMetres[0].first && s < kTunnelExtentsMetres[0].second;
+    const bool shortTunnel = s > kTunnelExtentsMetres[1].first && s < kTunnelExtentsMetres[1].second;
     const bool riverBridge = s > 73'900.0 && s < 75'100.0;
     const bool valleyViaduct = s > kValleyViaductBeginMetres && s < kValleyViaductEndMetres;
     // Lakehurst is approached beside a broad upland lake. It is deliberately offset from the

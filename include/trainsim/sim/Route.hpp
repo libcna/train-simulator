@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace TrainSim::Sim {
@@ -21,6 +23,9 @@ struct Station
 // Authored extent of the dry-valley viaduct. Rendering shapes the crossed valley from it.
 inline constexpr double kValleyViaductBeginMetres = 177'200.0;
 inline constexpr double kValleyViaductEndMetres = 180'000.0;
+// Authored tunnel extents {begin,end}; escape-route signs measure the nearer portal from them.
+inline constexpr std::array<std::pair<double,double>,2> kTunnelExtentsMetres = {{
+    {121'000.0, 126'800.0}, {229'500.0, 231'100.0}}};
 
 struct RoutePose
 {

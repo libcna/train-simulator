@@ -35,6 +35,15 @@ by lateral spurs, with zero weight at both abutments so the formation stays
 seamless. Viaduct pier shafts thicken with height and gain footings and tie
 beams; piers and parapet remain in the existing static scenery batch.
 
+`TunnelGeometry.hpp` builds the tunnel lining per 20 m segment and wall: a
+textured precast face in the shared concrete batch, a roof haunch, longitudinal
+and absolute 2 m ring joints with bolt pockets on Medium/High, a handrail and
+cable tray on 4 m brackets, and bracketed wall luminaires whose gradient wash is
+drawn in the same textured batch so its edges match the lining. Niche bays add an
+escape-route sign (direction and distance to the nearer portal from
+`Sim::kTunnelExtentsMetres`) and a hectometre plate in the printed-text batch.
+`tunnel_lining_rings` and `tunnel_marker_plates` expose the populations.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed
