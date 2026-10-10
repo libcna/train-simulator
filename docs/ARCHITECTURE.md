@@ -67,6 +67,13 @@ envelope and triangle budget tests.
 rail, paper dispenser, floor coves, sink vanity and spout, mirror, dispensers,
 threshold) in absolute train-local coordinates within the compartment envelope.
 
+`TrainExteriorGeometry.hpp` builds the passenger train's exterior kit in the
+interior batch outside the structural walls: lower bodyside with skirt cut-outs,
+bogies and underframe modules, livery bands, window gaskets and mullion faces,
+door reveals, roof crown with HVAC housing and pantographs, inter-car bellows and
+the cab nose, lamps, coupler, visor, gasket and wipers. Lamps use the unlit
+interior emitter batch; nothing is drawn with an extra call.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed

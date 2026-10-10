@@ -17,6 +17,7 @@
 #include "trainsim/render/SignalGeometry.hpp"
 #include "trainsim/render/InteriorFittingsGeometry.hpp"
 #include "trainsim/render/ToiletGeometry.hpp"
+#include "trainsim/render/TrainExteriorGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3820,4 +3821,72 @@ TEST_CASE("ceiling diffuser keeps its footprint with slats recessed behind a pro
     for (const auto& vertex : mesh.data().vertices)
         if (vertex.color == slat) REQUIRE(vertex.normal.Y < -0.5f);
     REQUIRE(highest > 2.829f);
+}
+
+TEST_CASE("lower bodyside keeps bogies and equipment within the body width above the rail")
+{
+    using namespace TrainSim::Render;
+    for (const float side : {-1.0f,1.0f})
+    {
+        MeshBuilder mesh;
+        addLowerBodyside(mesh,side,-62.75f,-42.25f,-52.5f,-47.0f,-45.4f,Color(211,218,218,255));
+        addLiveryBands(mesh,side,-62.75f,-42.25f,-47.0f,-45.4f,Color(32,102,121,255));
+        float lowest = 1.0f;
+        int wheelRims = 0;
+        for (const auto& vertex : mesh.data().vertices)
+        {
+            REQUIRE(vertex.position.X*side >= 0.99f);
+            REQUIRE(vertex.position.X*side <= 1.509f);
+            REQUIRE(vertex.position.Y >= -1.0e-5f);
+            REQUIRE(vertex.position.Y <= 0.86f+1.0e-5f);
+            REQUIRE(vertex.position.Z >= -62.76f);
+            REQUIRE(vertex.position.Z <= -42.24f);
+            lowest = std::min(lowest,vertex.position.Y);
+            // Only the wheels reach the rail plane; every other part floats above it.
+            if (vertex.position.Y < 1.0e-4f) ++wheelRims;
+        }
+        REQUIRE(std::abs(lowest) < 1.0e-5f);
+        REQUIRE(wheelRims > 0);
+    }
+}
+
+TEST_CASE("roof equipment and pantograph stay below the contact wire and above the roof")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder plain,powered;
+    addRoofEquipment(plain,-62.75f,-42.25f,-52.5f,false);
+    addRoofEquipment(powered,-41.75f,-21.25f,-31.5f,true);
+    REQUIRE(powered.data().indices.size() > plain.data().indices.size());
+    float highest = 0.0f;
+    for (const auto& vertex : powered.data().vertices)
+    {
+        REQUIRE(vertex.position.Y >= kRoofTop-1.0e-5f);
+        REQUIRE(std::abs(vertex.position.X) <= 1.48f+1.0e-5f);
+        highest = std::max(highest,vertex.position.Y);
+    }
+    REQUIRE(highest > 5.80f);
+    REQUIRE(highest < 5.85f);
+    for (const auto& vertex : plain.data().vertices) REQUIRE(vertex.position.Y < 3.60f);
+}
+
+TEST_CASE("cab exterior projects forward of the nose with lamps in the emitter batch")
+{
+    using namespace TrainSim::Render;
+    for (const float direction : {-1.0f,1.0f})
+    {
+        const float nose = direction*72.8f;
+        MeshBuilder mesh,emitters;
+        addCabExterior(mesh,emitters,direction,nose,Color(32,102,121,255));
+        REQUIRE(!emitters.data().empty());
+        for (const auto& vertex : mesh.data().vertices)
+        {
+            REQUIRE((vertex.position.Z-nose)*direction >= -0.60f);
+            REQUIRE((vertex.position.Z-nose)*direction <= 1.08f);
+            REQUIRE(std::abs(vertex.position.X) <= 1.52f);
+            REQUIRE(vertex.position.Y >= -1.0e-5f);
+            REQUIRE(vertex.position.Y <= 3.25f);
+        }
+        for (const auto& vertex : emitters.data().vertices)
+            REQUIRE((vertex.position.Z-nose)*direction > 0.07f);
+    }
 }

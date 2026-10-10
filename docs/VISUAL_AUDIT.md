@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **107 addressed, 16 open**. ENV-001 through ENV-104 and ENV-121 through ENV-123 have
+Current disposition: **122 addressed, 1 open**. ENV-001 through ENV-119 and ENV-121 through ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -165,21 +165,21 @@ not exist. "Not visible" is limited to the cited view.
 | 103 ENV-103 | ADDRESSED | The drain is a chrome strainer ring with a dark outlet. | sink |
 | 104 ENV-104 | ADDRESSED | A brushed threshold plate with short ramps and a seal line joins the compartment floor to the vestibule floor. | sink |
 | 104b ENV-121 | ADDRESSED | Diffusers are a proud trim frame with corner fasteners around a recessed dark plenum, angled light slats with visible gaps and a centre divider. | hvac-grille-ceiling-before, hvac-grille-ceiling-after |
-| 105 ENV-105 | P4 | Own-train side is mostly plain grey horizontal bands without a coherent exterior livery. Design an original service identity. | train-side |
-| 106 ENV-106 | P4 | Own-train bogies/wheels are not visible beneath the body, which appears to sit directly on a black strip. Model recognizable running gear. | train-side, train-front |
-| 107 ENV-107 | P4 | Own-train underframe has no visible equipment distribution. Add restrained battery/electrical/brake enclosures. | train-side |
-| 108 ENV-108 | P4 | Own-train roof is a completely flat bright slab with no curved cross-section. Improve the coach shell silhouette. | train-wide |
-| 109 ENV-109 | P4 | Electric train roof has no visible pantograph/electrical collection equipment. Add a plausible fictional arrangement. | train-wide |
-| 110 ENV-110 | P4 | Roof lacks visible HVAC housings and service panel divisions. Add a coherent roof equipment kit. | train-wide |
-| 111 ENV-111 | P4 | Cab nose is a flat-ended rectangular box with no shaped front transition. Improve its original train design silhouette. | train-front |
-| 112 ENV-112 | P4 | Cab face has no readable head/marker light clusters. Add appropriately housed lights. | train-front |
-| 113 ENV-113 | P4 | Cab front has no readable coupling/anti-climber assembly. Add plausible external operating hardware. | train-front |
-| 114 ENV-114 | P4 | Windscreen has no readable wiper hardware. Add wipers consistent with the glass geometry. | train-front |
-| 115 ENV-115 | P4 | Windscreen reads like an open rectangular hole without distinct perimeter seals. Give cab glazing its own closed construction. | train-front |
-| 116 ENV-116 | P4 | Inter-car exterior gaps are plain black rectangles instead of flexible bellows. Complete the external gangway connection. | train-side |
-| 117 ENV-117 | P4 | External window posts protrude awkwardly against body/header bands. Integrate the aperture into the exterior shell. | window-outside |
-| 118 ENV-118 | P4 | Exterior passenger door panels lack a convincing plug-door recess/perimeter seal. Finish the closed-door body joint. | track-close |
-| 119 ENV-119 | P4 | Large exterior glazing has almost no edge/lamination cue and shows the opposite interior with implausible clarity. Add subtle edge depth without hiding scenery. | window-outside |
+| 105 ENV-105 | ADDRESSED | A deep teal service band with a yellow sill line and a continuous dark window band give the bodyside an original identity. | train-side |
+| 106 ENV-106 | ADDRESSED | Recessed skirt cut-outs expose a bogie frame, bolster, round wheels and axleboxes at both ends of every car. | train-side, train-front |
+| 107 ENV-107 | ADDRESSED | Battery, converter and brake modules with lids hang between the bogies on both sides of each car. | train-side |
+| 108 ENV-108 | ADDRESSED | A raised roof crown with chamfered edges and panel divisions replaces the flat slab. | train-wide |
+| 109 ENV-109 | ADDRESSED | Cars 2 and 5 carry a single-arm pantograph on insulators with twin carbon strips just below the contact wire. | train-wide |
+| 110 ENV-110 | ADDRESSED | Each car has a louvred HVAC housing with two extractor discs and 3.5 m panel joints on the crown. | train-wide |
+| 111 ENV-111 | ADDRESSED | The lower nose tapers in plan through two corner panels to a narrower front plate under a sloping roof visor. | train-front |
+| 112 ENV-112 | ADDRESSED | Two housed head/marker lamp clusters sit on the front plate with a high headlamp in the visor. | train-front |
+| 113 ENV-113 | ADDRESSED | A coupler shank and head project from the front plate below three anti-climber ribs. | train-front |
+| 114 ENV-114 | ADDRESSED | Two external wiper arms on pivot stubs sit on the windscreen face. | train-front |
+| 115 ENV-115 | ADDRESSED | A dark gasket frame closes the windscreen perimeter. | train-front |
+| 116 ENV-116 | ADDRESSED | Ribbed rubber bellows with alternating folds fill every inter-car gap. | train-side |
+| 117 ENV-117 | ADDRESSED | Mullions carry a dark exterior face continuous with the window band, so posts no longer contrast with the shell. | window-outside |
+| 118 ENV-118 | ADDRESSED | A dark perimeter seal and recessed header surround each doorway. | track-close |
+| 119 ENV-119 | ADDRESSED | Each window has a proud dark rubber gasket giving edge depth; the glazing tint itself is unchanged so scenery stays visible. | window-outside |
 | 120 ENV-120 | P4 | Terminal overview lacks the spatial identity of a terminus: one long shelter beside isolated building blocks and broad blank land. Develop an authored terminal composition. | terminal-wide |
 
 ## Verification protocol
@@ -1990,4 +1990,40 @@ Unit tests: **172/172**; whole suite **67/67, 122.69 s**. 600-frame seated car 2
 sample: **92 draws unchanged**, **1,433,508 → 1,434,132** triangles; steady mean
 **25.4 → 25.5 ms**, p95 **25.8 → 25.8 ms**, p99 **26.1 → 26.0 ms**, maximum
 **26.3 → 26.4 ms**. Prefixes: `hvac-grille-`, `hvac-close-`. ENV-121 is
-addressed; ENV-105 to ENV-120 remain open.
+addressed.
+
+### Train exterior shell and equipment: ENV-105 to ENV-119
+
+`TrainExteriorGeometry.hpp` adds the exterior kit to the immutable interior
+batch, outside the +-1.50 m structural walls. The single lower wall box of each
+side is replaced by `addLowerBodyside`: the sill band, a recessed skirt with
+cut-outs at both bogie positions, a dark backing behind each cut-out, a bogie
+frame with bolster, two round wheelsets with axleboxes, and battery, converter
+and brake modules between the bogies. `addLiveryBands` lays a deep teal service
+band with a yellow sill line across the mullions; `addExteriorMullionFace`,
+`addExteriorWindowGasket` and `addExteriorDoorReveal` give the window band,
+glazing edges and plug-door seals. `addRoofEquipment` raises a chamfered crown
+with panel joints and a louvred HVAC housing with extractor discs on every car,
+plus a single-arm pantograph on insulators on cars 2 and 5 whose strips stay
+below the 5.85 m contact wire. `addExteriorBellows` ribs every inter-car gap.
+`addCabExterior` tapers the lower nose in plan to a front plate with coupler,
+anti-climber ribs and housed head/marker lamps (unlit emitter batch), adds a
+sloping roof visor with high headlamp, a windscreen gasket and external wipers.
+The glazing tint is unchanged, so the passenger's view out is not darkened.
+
+Inspected matched [train side before](../build/visual-audit/train-exterior-train-side-before.png) /
+[after](../build/visual-audit/train-exterior-train-side-after.png),
+[low before](../build/visual-audit/train-exterior-train-low-before.png) /
+[after](../build/visual-audit/train-exterior-train-low-after.png) showing the
+bogies and equipment, train front, roof, car gap, window outside, wide and
+platform views. Three new unit tests bound the bodyside kit above the rail and
+within the body width (wheels alone reach the rail plane), keep the pantograph
+between the roof and the wire, and keep the cab kit forward of the nose with
+lamps in the emitter batch. The first capture script measured performance with
+`--audit-camera` and no screenshot, which the binary rejects; the seated car 1
+run replaced it and both stages were re-captured. 600-frame seated car 1 sample: **90 draws unchanged**,
+**1,433,748 → 1,456,984** triangles; steady mean **25.9 → 25.5 ms**, p95
+**28.6 → 26.1 ms**, p99 **32.0 → 26.5 ms**, maximum **41.2 → 28.7 ms** (the
+before run hit a host-load spike; the figures are not a claimed speedup). Whole
+suite **67/67, 131.31 s**; unit tests **175/175**. Prefix:
+`train-exterior-`. ENV-105 to ENV-119 are addressed; ENV-120 remains open.

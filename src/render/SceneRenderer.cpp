@@ -8,6 +8,7 @@
 #include "trainsim/render/SignalGeometry.hpp"
 #include "trainsim/render/InteriorFittingsGeometry.hpp"
 #include "trainsim/render/ToiletGeometry.hpp"
+#include "trainsim/render/TrainExteriorGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -6151,6 +6152,8 @@ void SceneRenderer::buildInterior()
         }
         ++nonCarpetedFloorZoneCount_;
         mesh.addBox(Vector3{-1.48f,2.92f,start}, Vector3{1.48f,3.08f,end}, shell);
+        // Exterior roof crown, chamfers, HVAC housing and pantographs on the powered cars.
+        addRoofEquipment(mesh,start,end,centre,car == 1 || car == 4);
 
         // Close passenger-eye surfaces receive a restrained polymer-grain material. These thin
         // inset skins retain the structural shell and trim in the legacy batch while replacing
@@ -6165,10 +6168,9 @@ void SceneRenderer::buildInterior()
         {
             const float x0 = side < 0 ? -1.50f : 1.42f;
             const float x1 = side < 0 ? -1.42f : 1.50f;
-            mesh.addBox(Vector3{x0,0.05f,start},
-                        Vector3{x1,0.86f,passengerDoorBegin}, shell);
-            mesh.addBox(Vector3{x0,0.05f,passengerDoorEnd},
-                        Vector3{x1,0.86f,end}, shell);
+            // Lower bodyside with recessed skirt, bogies, underframe equipment and livery.
+            addLowerBodyside(mesh,side,start,end,centre,passengerDoorBegin,passengerDoorEnd,shell);
+            addLiveryBands(mesh,side,start,end,passengerDoorBegin,passengerDoorEnd,trim);
             mesh.addBox(Vector3{x0,2.34f,start}, Vector3{x1,3.00f,end}, shell);
             const float panelX = side*1.416f;
             addWallPanel(panelX,0.10f,0.80f,start+0.04f,passengerDoorBegin-0.07f,
@@ -6197,6 +6199,7 @@ void SceneRenderer::buildInterior()
                 const float halfWidth=static_cast<float>(Sim::TrainInterior::WindowMullionWidth)*0.5f;
                 mesh.addBox(Vector3{x0,0.82f,z-halfWidth},
                             Vector3{x1,2.38f,z+halfWidth}, trim);
+                addExteriorMullionFace(mesh,side,z,halfWidth);
                 addPassengerMullionCap(interiorPanelMaterial,side,z,halfWidth);
                 const float seamX0 = side < 0.0f ? -1.38f : 0.13f;
                 const float seamX1 = side < 0.0f ? -0.13f : 1.38f;
@@ -6218,6 +6221,7 @@ void SceneRenderer::buildInterior()
             for (float jambZ : {passengerDoorBegin, passengerDoorEnd})
                 mesh.addBox(Vector3{x0,0.04f,jambZ-0.065f},
                             Vector3{x1,2.40f,jambZ+0.065f}, trim);
+            addExteriorDoorReveal(mesh,side,passengerDoorBegin,passengerDoorEnd);
             addPassengerDoorControlHousing(mesh,side,passengerDoorBegin);
             const float thresholdInner = side * 1.18f;
             const float thresholdOuter = side * 1.50f;
@@ -6241,6 +6245,7 @@ void SceneRenderer::buildInterior()
                                            int reflectionVariant) {
                 if (windowEnd - windowBegin < 0.08f) return;
                 addPassengerWindowFrame(mesh,side,windowBegin,windowEnd);
+                addExteriorWindowGasket(mesh,side,windowBegin,windowEnd);
                 const float innerX = side < 0.0f ? -1.455f : 1.445f;
                 const float outerX = side < 0.0f ? -1.445f : 1.455f;
                 glass.addBox(Vector3{innerX,0.88f,windowBegin},
@@ -6756,6 +6761,7 @@ void SceneRenderer::buildInterior()
         mesh.addBox(Vector3{1.08f,1.32f,noseMin}, Vector3{1.46f,2.75f,noseMax}, shell);
         glass.addBox(Vector3{-1.06f,1.42f,noseMin}, Vector3{1.06f,2.68f,noseMax},
                      Color(50,103,126,64));
+        addCabExterior(mesh,interiorEmitters,direction,nose,trim);
         const float deskZ0 = nose - direction * 1.2f;
         const float deskZ1 = nose - direction * 0.45f;
         mesh.addBox(Vector3{-1.08f,1.02f,std::min(deskZ0,deskZ1)},
@@ -6827,6 +6833,7 @@ void SceneRenderer::buildInterior()
                     Vector3{-0.62f,2.92f,z+0.24f},endWall);
         mesh.addBox(Vector3{0.62f,0.0f,z-0.24f},
                     Vector3{1.47f,2.92f,z+0.24f},endWall);
+        addExteriorBellows(mesh,z);
         // The structural header must clear the complete corrugated skin (top 2.416 m).
         mesh.addBox(Vector3{-0.62f,2.43f,z-0.24f},
                     Vector3{0.62f,2.92f,z+0.24f},endWall);
