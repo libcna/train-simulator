@@ -4,6 +4,8 @@
 #include "trainsim/render/BridgeGeometry.hpp"
 #include "trainsim/render/TunnelGeometry.hpp"
 #include "trainsim/render/TrackGeometry.hpp"
+#include "trainsim/render/LinesideGeometry.hpp"
+#include "trainsim/render/SignalGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -1402,6 +1404,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
     staticWorldViaductSections_ = 0;
     staticWorldBridgeAbutments_ = 0;
     staticWorldBridgeParapetPosts_ = 0;
+    staticWorldFencePosts_ = 0;
     staticWorldPlatformSurfaceJoints_ = 0;
     staticWorldPlatformCanopyLights_ = 0;
     staticWorldPlatformCanopyDrainageAssemblies_ = 0;
@@ -1566,7 +1569,6 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
     {
         const double middle = (chunk.beginDistance + chunk.endDistance) * 0.5;
         const Sim::RoutePose pose = route.sample(middle);
-        const float length = static_cast<float>(chunk.endDistance - chunk.beginDistance) + 2.0f;
         const Color ground = pose.urbanity > 0.55 ? Color(92,99,96,255) : Color(91,133,72,255);
 
         // A curved, deterministic terrain ribbon extends beyond the fog start. The railway
@@ -2135,37 +2137,36 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
         constexpr float kContactWireHeight = 5.85f;
         constexpr float kMessengerWireHeight = 6.38f;
         constexpr float kMessengerSag = 0.22f;
-        const LocalRoutePoint wirePoint = localRoutePoint(route, anchorDistance, middle);
-        addOrientedBox(mesh, wirePoint.x, wirePoint.y+kContactWireHeight, wirePoint.z,
-                       0.045f,0.045f,length,wirePoint.yaw,Color(72,76,73,255));
-        const LocalRoutePoint parallelWire = localRoutePoint(
-            route, anchorDistance, middle, route.parallelTrackLateralMetres(middle));
-        addOrientedBox(mesh, parallelWire.x, parallelWire.y+kContactWireHeight, parallelWire.z,
-                       0.045f,0.045f,length,parallelWire.yaw,Color(72,76,73,255));
-
+        // Both wires are chords between absolute-cadence route points, so curves and the
+        // messenger sag stay continuous across chunk seams instead of stepping sideways.
         const double messengerStep = graphicsQuality_ >= 2 ? 12.5 : 25.0;
-        double messengerBegin = std::ceil(chunk.beginDistance/messengerStep)*messengerStep;
-        for (; messengerBegin < chunk.endDistance; messengerBegin += messengerStep)
+        const auto messengerSag = [&](double distance) {
+            const double spanPhase = std::fmod(distance,50.0)/50.0;
+            return static_cast<float>(4.0*spanPhase*(1.0-spanPhase))*kMessengerSag;
+        };
+        const auto wireEnd = [&](double distance,bool parallel,float height) {
+            const double lateral = parallel ? route.parallelTrackLateralMetres(distance) : 0.0;
+            const LocalRoutePoint p = localRoutePoint(route,anchorDistance,distance,lateral);
+            return Vector3{p.x,p.y+height,p.z};
+        };
+        double wireBegin = chunk.beginDistance;
+        while (wireBegin < chunk.endDistance)
         {
-            const double messengerEnd = std::min(
-                chunk.endDistance,messengerBegin+messengerStep);
-            const double messengerMiddle = (messengerBegin+messengerEnd)*0.5;
-            const double spanPhase = std::fmod(messengerMiddle,50.0)/50.0;
-            const float sag = static_cast<float>(
-                4.0*spanPhase*(1.0-spanPhase))*kMessengerSag;
-            const std::array<double,2> trackLaterals = {
-                0.0,route.parallelTrackLateralMetres(messengerMiddle)};
-            for (double lateral : trackLaterals)
+            const double wireEndDistance = std::min(chunk.endDistance,
+                (std::floor(wireBegin/messengerStep)+1.0)*messengerStep);
+            for (bool parallel : {false,true})
             {
-                const LocalRoutePoint messenger = localRoutePoint(
-                    route,anchorDistance,messengerMiddle,lateral);
-                addOrientedBox(mesh,messenger.x,
-                               messenger.y+kMessengerWireHeight-sag,messenger.z,
-                               0.038f,0.038f,
-                               static_cast<float>(messengerEnd-messengerBegin)+0.06f,
-                               messenger.yaw,Color(67,72,69,255));
+                addBarBetween(mesh,wireEnd(wireBegin,parallel,kContactWireHeight),
+                              wireEnd(wireEndDistance,parallel,kContactWireHeight),
+                              0.045f,Color(72,76,73,255),0.03f);
+                addBarBetween(mesh,
+                              wireEnd(wireBegin,parallel,kMessengerWireHeight-messengerSag(wireBegin)),
+                              wireEnd(wireEndDistance,parallel,
+                                      kMessengerWireHeight-messengerSag(wireEndDistance)),
+                              0.038f,Color(67,72,69,255),0.03f);
                 ++staticWorldCatenaryMessengerSegments_;
             }
+            wireBegin = wireEndDistance;
         }
         const auto firstDropper = static_cast<std::int64_t>(
             std::ceil(chunk.beginDistance/25.0));
@@ -2250,7 +2251,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
 
             // Precast lining with ring and longitudinal joints, a roof haunch, handrail and
             // cable tray on brackets. The textured face shares the streamed concrete material.
-            for (const auto [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
+            for (const auto& [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
             {
                 staticWorldTunnelLiningRings_ += addTunnelLiningSegment(
                     mesh,platformMaterial,tunnelPoint,tunnelBegin,tunnelEnd,face,inward,
@@ -2357,7 +2358,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
 
             // Both running lines share this broad tunnel. Wall-mounted fixtures ensure that a
             // passenger looking squarely through either side window sees depth and speed cues.
-            for (const auto [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
+            for (const auto& [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
                 addTunnelWallLuminaire(mesh,platformMaterial,worldLuminaires,tunnelPoint,
                                        luminaireDistance,face,inward,tunnelStyle);
         }
@@ -2419,7 +2420,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             const auto parapetPoint = [&](double distance,double lateral) {
                 return localRoutePoint(route,anchorDistance,distance,lateral);
             };
-            for (const auto [lateral,outward] : {std::pair{-8.0,-1.0f},std::pair{3.0,1.0f}})
+            for (const auto& [lateral,outward] : {std::pair{-8.0,-1.0f},std::pair{3.0,1.0f}})
             {
                 staticWorldBridgeParapetPosts_ += addBridgeParapet(
                     mesh,parapetPoint,bridgeBegin,bridgeEnd,lateral,outward,
@@ -2517,23 +2518,21 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             }
         }
 
-        if (!pose.bridge && !pose.tunnel && pose.urbanity < 0.62)
+        if (linesideFenceAllowed(pose))
         {
+            // Slim posts and wire strands follow the route chord; strained end posts close the
+            // fence where the neighbouring chunk is a bridge, tunnel or urban corridor.
+            const bool fenceEndsAtBegin = !linesideFenceAllowed(
+                route.sample(std::max(0.0,middle-world.chunkLength())));
+            const bool fenceEndsAtEnd = !linesideFenceAllowed(
+                route.sample(std::min(route.lengthMetres(),middle+world.chunkLength())));
+            const auto fencePoint = [&](double distance,double lateral) {
+                return localRoutePoint(route,anchorDistance,distance,lateral);
+            };
             for (double side : {-1.0, 1.0})
-            {
-                const LocalRoutePoint fence = localRoutePoint(
-                    route, anchorDistance, middle, side * 8.7);
-                for (float height : {0.62f, 1.16f})
-                    addOrientedBox(mesh, fence.x,fence.y+height,fence.z,
-                                   0.055f,0.055f,length,fence.yaw,Color(92,98,94,255));
-                for (double offset = -length * 0.5 + 6.0; offset < length * 0.5; offset += 12.0)
-                {
-                    const LocalRoutePoint post = localRoutePoint(
-                        route, anchorDistance, middle + offset, side * 8.7);
-                    addOrientedBox(mesh, post.x,post.y+0.65f,post.z,
-                                   0.09f,1.3f,0.09f,post.yaw,Color(82,88,84,255));
-                }
-            }
+                staticWorldFencePosts_ += addLinesideFence(
+                    mesh,fencePoint,chunk.beginDistance,chunk.endDistance,
+                    side*kFenceLateral,fenceEndsAtBegin,fenceEndsAtEnd);
         }
 
         if (!pose.bridge && !pose.tunnel && pose.urbanity < 0.55
@@ -4742,71 +4741,15 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                 }
                 case World::FeatureKind::Signal:
                 {
+                    // Head, lenses, ladder, cabinet and plate come from SignalGeometry.hpp; the
+                    // live pass below overlays exactly one lit lens at the same positions.
                     const int facingDirection = World::signalFacingDirection(feature);
-                    const float signalYaw = point.yaw + (facingDirection < 0 ? kPi : 0.0f);
-                    addOrientedBox(mesh,point.x,point.y+0.12f,point.z,
-                                   0.55f,0.24f,0.55f,point.yaw,Color(105,105,99,255));
-                    addOrientedBox(mesh, point.x,point.y+2.1f,point.z,
-                                   0.18f,4.2f,0.18f,point.yaw,Color(55,60,58,255));
-                    addOrientedBox(mesh, point.x,point.y+4.1f,point.z,
-                                   0.60f,1.2f,0.48f,signalYaw,Color(28,31,30,255));
-
-                    // Three recessed dark lenses stay in the static batch. The live pass below
-                    // overlays exactly one face at its real red/yellow/green vertical position.
-                    const double lensDistance = feature.routeDistance
-                        - 0.275*static_cast<double>(facingDirection);
+                    addColourLightSignal(mesh,[&](double distance,double lateral) {
+                        return localRoutePoint(route,anchorDistance,distance,lateral);
+                    },feature.routeDistance,feature.lateralMetres,facingDirection,
+                    graphicsQuality_>0);
                     const double lensLateral = feature.lateralMetres
-                        - std::copysign(0.20,feature.lateralMetres);
-                    for (float lensHeight : {4.42f,4.10f,3.78f})
-                    {
-                        const LocalRoutePoint lens = localRoutePoint(
-                            route,anchorDistance,lensDistance,lensLateral);
-                        addOrientedBox(mesh,lens.x,lens.y+lensHeight,lens.z,
-                                       0.23f,0.23f,0.075f,signalYaw,
-                                       Color(16,19,18,255));
-                    }
-
-                    // Rear access ladder and ground cabinet turn the silhouette into maintained
-                    // railway equipment rather than a decorative post. Both remain clear of the
-                    // running line and cost no additional submission.
-                    const double ladderDistance = feature.routeDistance
-                        + 0.16*static_cast<double>(facingDirection);
-                    for (double lateralOffset : {-0.16,0.16})
-                    {
-                        const LocalRoutePoint upright = localRoutePoint(
-                            route,anchorDistance,ladderDistance,
-                            feature.lateralMetres+lateralOffset);
-                        addOrientedBox(mesh,upright.x,upright.y+1.87f,upright.z,
-                                       0.035f,3.35f,0.035f,upright.yaw,
-                                       Color(119,123,119,255));
-                    }
-                    for (float rungHeight = 0.38f; rungHeight < 3.48f; rungHeight += 0.31f)
-                    {
-                        const LocalRoutePoint rung = localRoutePoint(
-                            route,anchorDistance,ladderDistance,feature.lateralMetres);
-                        addOrientedBox(mesh,rung.x,rung.y+rungHeight,rung.z,
-                                       0.37f,0.030f,0.040f,rung.yaw,
-                                       Color(119,123,119,255));
-                    }
-                    const double cabinetLateral = feature.lateralMetres
-                        + std::copysign(0.54,feature.lateralMetres);
-                    const LocalRoutePoint cabinet = localRoutePoint(
-                        route,anchorDistance,feature.routeDistance,cabinetLateral);
-                    addOrientedBox(mesh,cabinet.x,cabinet.y+0.47f,cabinet.z,
-                                   0.54f,0.86f,0.42f,cabinet.yaw,Color(109,116,112,255));
-                    const LocalRoutePoint cabinetDoor = localRoutePoint(
-                        route,anchorDistance,
-                        feature.routeDistance-0.23*static_cast<double>(facingDirection),
-                        cabinetLateral);
-                    addOrientedBox(mesh,cabinetDoor.x,cabinetDoor.y+0.47f,cabinetDoor.z,
-                                   0.44f,0.69f,0.035f,signalYaw,Color(148,153,146,255));
-
-                    const double plateDistance = feature.routeDistance
-                        - 0.285*static_cast<double>(facingDirection);
-                    const LocalRoutePoint plate = localRoutePoint(
-                        route,anchorDistance,plateDistance,lensLateral);
-                    addOrientedBox(mesh,plate.x,plate.y+3.20f,plate.z,
-                                   0.50f,0.27f,0.055f,signalYaw,Color(230,227,205,255));
+                        - std::copysign(kSignalLensInset,feature.lateralMetres);
                     const int signalNumber = static_cast<int>(
                         std::floor(feature.routeDistance/250.0)) % 100;
                     addTrackFacingText(mesh,route,anchorDistance,
@@ -8653,6 +8596,7 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     stats.viaductSections = staticWorldViaductSections_;
     stats.bridgeAbutments = staticWorldBridgeAbutments_;
     stats.bridgeParapetPosts = staticWorldBridgeParapetPosts_;
+    stats.fencePosts = staticWorldFencePosts_;
     stats.platformSurfaceJoints = staticWorldPlatformSurfaceJoints_;
     stats.platformCanopyLights = staticWorldPlatformCanopyLights_;
     stats.platformCanopyDrainageAssemblies =

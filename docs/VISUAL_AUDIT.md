@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **77 addressed, 46 open**. ENV-001 through ENV-075, ENV-122 and ENV-123 have
+Current disposition: **82 addressed, 41 open**. ENV-001 through ENV-080, ENV-122 and ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -135,11 +135,11 @@ not exist. "Not visible" is limited to the cited view.
 | 073 ENV-073 | ADDRESSED | Both shoulders slope from the crown to a deterministically wobbling toe in the ballast material; the formation box is hidden beneath. | track-close |
 | 074 ENV-074 | ADDRESSED | Near sleepers are chamfered monoblocks with two rail-seat blocks and a lower waist, keeping the three-tone variation; far ones stay boxes. | urban-left, track-close |
 | 075 ENV-075 | ADDRESSED | Rails have an oxidised foot, a slender web and a broader steel head with the polished running surface on top. | track-close, signal |
-| 076 ENV-076 | P2 | Lineside fences are heavy dark straight rails with abrupt cut ends. Improve wire/post scale and segment closure. | passing-train, country-near |
-| 077 ENV-077 | P2 | Signal head reads as a deep black box with weak aspect lens definition. Improve lens/hood/backboard separation at passenger angles. | signal |
-| 078 ENV-078 | P2 | Signal ladder has broad rectangular rails/rungs and a crude mast connection. Refine dimensions and attachment. | signal |
-| 079 ENV-079 | P2 | Signal mast/cabinet finish is uniformly flat with little construction detail. Add readable access panel and mounting cues. | signal |
-| 080 ENV-080 | P2 | Overhead contact wires show visible disconnected/jumped sections in oblique views. Verify and join span endpoints. | train-side, train-front |
+| 076 ENV-076 | ADDRESSED | Fences are slim 3 m posts with four wire strands following the route chord, closed by strained end posts with struts where the fence stops. | passing-train, country-near |
+| 077 ENV-077 | ADDRESSED | The head is a white-edged backboard over a slimmer housing, each lens recessed in a lighter rim under its own hood. | signal |
+| 078 ENV-078 | ADDRESSED | The ladder has slim stiles, 22 mm rungs, stand-off brackets to the mast and a landing with hoop guard at head level. | signal |
+| 079 ENV-079 | ADDRESSED | The mast has a bolted base flange and access panel; the cabinet has hinges, a lock, louvres and a conduit up the mast. | signal |
+| 080 ENV-080 | ADDRESSED | Contact and messenger wires are pitched chords between absolute 12.5 m route points, continuous through curves and chunk seams. | train-side, train-front |
 | 081 ENV-081 | P3 | Seat-back handhold is a black oval patch rather than a convincing recessed grip. Add cavity/rim depth. | seat-rear-close |
 | 082 ENV-082 | P3 | Literature pockets are rigid flat grey panels with a thick lip. Give the pocket a believable opening and material. | seat-rear-close |
 | 083 ENV-083 | P3 | Seat support posts are plain rectangular metal extrusions with weak finish. Refine cross-section and surface response. | seat-front-close |
@@ -1867,5 +1867,36 @@ unchanged**, **1,313,118 → 1,392,266** triangles (sleeper profiles and
 shoulders; ballast material **1,336 → 4,008**); steady mean **25.4 → 25.5 ms**,
 p95 **25.7 → 26.3 ms**, p99 **25.9 → 26.7 ms**, maximum **26.3 → 27.2 ms**;
 initial rebuild **189.4 → 134.6 ms** (run-to-run variation, not a claimed
-speedup). Prefix: `track-surface-`. ENV-072 to ENV-075 are addressed; ENV-076
-onward and ENV-121 remain open.
+speedup). Prefix: `track-surface-`. ENV-072 to ENV-075 are addressed.
+
+### Wire fences, signal construction and joined catenary: ENV-076 to ENV-080
+
+`LinesideGeometry.hpp` adds `addBarBetween`, a square bar between two world
+points with yaw and pitch, and the boundary fence: 75 mm concrete posts on an
+absolute 3 m cadence, four 18 mm strands as 12 m chords, and a heavier strained
+post with a diagonal strut at either end of a run whose neighbouring chunk is a
+bridge, tunnel or urban corridor; `fence_posts` counts them. The contact wire
+and sagged messenger of both running lines are now chords between the same
+absolute 12.5 m (High) or 25 m points, with the sag evaluated at each end, so
+the earlier 252 m straight boxes no longer step sideways at chunk seams on
+curves. `SignalGeometry.hpp` rebuilds the colour-light signal: bolted base
+flange, mast access panel, white-edged backboard over a slimmer housing, lens
+rims and hoods, a slim ladder on stand-off brackets with a landing and hoop
+guard, a cabinet with hinges, lock, louvres and conduit, and the identification
+plate. The three recessed lens centres and the `S` number text keep their exact
+positions, so the live aspect overlay is unchanged. Low quality omits the bolts,
+hinges and louvres.
+
+Inspected matched [signal before](../build/visual-audit/lineside-signal-before.png) /
+[after](../build/visual-audit/lineside-signal-after.png),
+[fence close before](../build/visual-audit/lineside-fence-close-before.png) /
+[after](../build/visual-audit/lineside-fence-close-after.png), the fence along
+view and the three wire views; the oblique train-side before image shows the
+stepped wire runs, the after image continuous wires. Three new unit tests cover
+the chord bar envelope, fence cadence/strainers/`linesideFenceAllowed`, and the
+signal lens positions at both facings and sides. 600-frame rural sample: **94
+draws unchanged**, **1,392,266 → 1,422,530** triangles, **1,166 fence posts**;
+steady mean **25.5 → 25.5 ms**, p95 **26.2 → 25.8 ms**, p99 **26.6 → 25.9 ms**,
+maximum **29.4 → 26.2 ms**; initial rebuild **126.6 → 139.8 ms**. Prefix:
+`lineside-`. ENV-076 to ENV-080 are addressed; ENV-081 onward and ENV-121
+remain open.

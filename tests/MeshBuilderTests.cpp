@@ -13,6 +13,8 @@
 #include "trainsim/render/BridgeGeometry.hpp"
 #include "trainsim/render/TunnelGeometry.hpp"
 #include "trainsim/render/TrackGeometry.hpp"
+#include "trainsim/render/LinesideGeometry.hpp"
+#include "trainsim/render/SignalGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3544,4 +3546,100 @@ TEST_CASE("rail profile has a broad foot slender web and wider head below the ru
     REQUIRE(std::abs(highest-kRailHeadTop) < 1.0e-5f);
     REQUIRE(kRailHeadHalfWidth > kRailWebHalfWidth*3.0f);
     REQUIRE(kRailFootHalfWidth > kRailHeadHalfWidth);
+}
+
+TEST_CASE("bars between points follow their chord including pitch")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder mesh;
+    const Vector3 a{1.0f,5.0f,-10.0f},b{3.0f,6.0f,10.0f};
+    addBarBetween(mesh,a,b,0.04f,Color(72,76,73,255));
+    REQUIRE(mesh.data().indices.size() == 36);
+    const Vector3 axis = Vector3::Normalize(b-a);
+    float nearA = 1.0e9f,nearB = 1.0e9f;
+    for (const auto& vertex : mesh.data().vertices)
+    {
+        // Every corner lies within half the thickness of the chord.
+        const Vector3 relative = vertex.position-a;
+        const float along = Vector3::Dot(relative,axis);
+        const Vector3 perpendicular = relative-axis*along;
+        REQUIRE(perpendicular.Length() <= 0.04f*0.7072f+1.0e-4f);
+        nearA = std::min(nearA,along);
+        nearB = std::min(nearB,(b-a).Length()-along);
+    }
+    REQUIRE(std::abs(nearA) < 1.0e-3f);
+    REQUIRE(std::abs(nearB) < 1.0e-3f);
+}
+
+TEST_CASE("lineside fence keeps absolute post cadence strands and strained ends")
+{
+    using namespace TrainSim::Render;
+    const auto point = [](double distance,double lateral) {
+        return tunnelTestPoint(distance,lateral);
+    };
+    MeshBuilder open;
+    REQUIRE(addLinesideFence(open,point,250.0,500.0,kFenceLateral,false,false) == 83);
+    MeshBuilder closed;
+    REQUIRE(addLinesideFence(closed,point,250.0,500.0,-kFenceLateral,true,true) == 85);
+    REQUIRE(closed.data().indices.size() == open.data().indices.size()+4U*36U);
+    float highest = 0.0f;
+    for (const auto& vertex : open.data().vertices)
+    {
+        REQUIRE(vertex.position.Z >= 250.0f-0.05f);
+        REQUIRE(vertex.position.Z <= 500.0f+0.05f);
+        REQUIRE(std::abs(vertex.position.X-kFenceLateral) <= 0.04f);
+        REQUIRE(vertex.position.Y >= -1.0e-4f);
+        highest = std::max(highest,vertex.position.Y);
+    }
+    REQUIRE(std::abs(highest-kFencePostHeight) < 1.0e-4f);
+    // Struts lean inward from each end post and never project past the fence run.
+    for (const auto& vertex : closed.data().vertices)
+    {
+        REQUIRE(vertex.position.Z >= 250.0f-0.06f);
+        REQUIRE(vertex.position.Z <= 500.0f+0.06f);
+    }
+    TrainSim::Sim::RoutePose pose;
+    REQUIRE(linesideFenceAllowed(pose));
+    pose.urbanity = 0.7;
+    REQUIRE(!linesideFenceAllowed(pose));
+    pose.urbanity = 0.1;
+    pose.bridge = true;
+    REQUIRE(!linesideFenceAllowed(pose));
+}
+
+TEST_CASE("colour light signal keeps lens centres where the live aspect pass draws")
+{
+    using namespace TrainSim::Render;
+    for (const int facing : {1,-1})
+        for (const double lateral : {-6.1,6.1})
+        {
+            MeshBuilder mesh;
+            addColourLightSignal(mesh,tunnelTestPoint,1'000.0,lateral,facing,true);
+            MeshBuilder low;
+            addColourLightSignal(low,tunnelTestPoint,1'000.0,lateral,facing,false);
+            REQUIRE(low.data().indices.size() < mesh.data().indices.size());
+            const float side = lateral < 0.0 ? -1.0f : 1.0f;
+            const float lensX = static_cast<float>(lateral)-side*static_cast<float>(kSignalLensInset);
+            const float faceZ = 1'000.0f-static_cast<float>(kSignalLensDepth*facing);
+            float highest = 0.0f;
+            std::array<int,3> lensFaces{};
+            for (const auto& vertex : mesh.data().vertices)
+            {
+                REQUIRE(std::abs(vertex.position.Z-1'000.0f) <= 1.8f);
+                REQUIRE(std::abs(vertex.position.X-static_cast<float>(lateral)) <= 1.0f);
+                REQUIRE(vertex.position.Y >= -1.0e-4f);
+                highest = std::max(highest,vertex.position.Y);
+                // The recessed dark lens boxes are 0.23 m squares centred on the lens axis.
+                if (vertex.color == Color(16,19,18,255).getPackedValueProperty())
+                    for (std::size_t index = 0; index < kSignalLensHeights.size(); ++index)
+                        if (std::abs(vertex.position.Y-kSignalLensHeights[index]) < 0.116f
+                            && std::abs(vertex.position.X-lensX) < 0.116f
+                            && std::abs(vertex.position.Z-faceZ) < 0.04f)
+                            ++lensFaces[index];
+            }
+            // addBox shades five faces; only the unshaded face keeps the exact lens colour.
+            for (int count : lensFaces) REQUIRE(count == 4);
+            REQUIRE(highest > 4.75f);
+            REQUIRE(highest < 5.0f);
+        }
 }

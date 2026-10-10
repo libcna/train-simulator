@@ -50,6 +50,12 @@ inside the fastener radius, a box beyond it) and the foot/web/head rail profile
 under the specular running-surface quad. Ballast shoulders are sloped textured
 quads in the ballast material; the formation box is hidden under the crown.
 
+`LinesideGeometry.hpp` provides `addBarBetween` (a pitched, yawed bar between
+two world points) used for catenary contact/messenger chords, fence strands and
+struts, plus the boundary fence with absolute post cadence and strained end
+posts. `SignalGeometry.hpp` builds the colour-light signal; its lens centres are
+shared with the live aspect overlay in `SceneRenderer`.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed

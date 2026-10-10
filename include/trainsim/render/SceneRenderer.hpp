@@ -131,6 +131,7 @@ struct RenderStats
     int viaductSections = 0;
     int bridgeAbutments = 0;
     int bridgeParapetPosts = 0;
+    int fencePosts = 0;
     int stationClockHands = 0;
     int levelCrossingBarriers = 0;
     int levelCrossingWarningLights = 0;
@@ -388,6 +389,7 @@ private:
     int staticWorldViaductSections_ = 0;
     int staticWorldBridgeAbutments_ = 0;
     int staticWorldBridgeParapetPosts_ = 0;
+    int staticWorldFencePosts_ = 0;
     int staticWorldPlatformSurfaceJoints_ = 0;
     int staticWorldPlatformCanopyLights_ = 0;
     int staticWorldPlatformCanopyDrainageAssemblies_ = 0;

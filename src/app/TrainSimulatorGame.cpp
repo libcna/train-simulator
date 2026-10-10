@@ -682,7 +682,8 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " river_bank_clumps=" << renderStats_.riverBankClumps
                   << " bridge_parapet_posts=" << renderStats_.bridgeParapetPosts
                   << " tunnel_lining_rings=" << renderStats_.tunnelLiningRings
-                  << " tunnel_marker_plates=" << renderStats_.tunnelMarkerPlates << '\n';
+                  << " tunnel_marker_plates=" << renderStats_.tunnelMarkerPlates
+                  << " fence_posts=" << renderStats_.fencePosts << '\n';
     }
 }
 
