@@ -9,6 +9,7 @@
 #include "trainsim/render/InteriorFittingsGeometry.hpp"
 #include "trainsim/render/ToiletGeometry.hpp"
 #include "trainsim/render/TrainExteriorGeometry.hpp"
+#include "trainsim/render/TerminalGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -61,6 +62,7 @@
 #include "System/TimeSpan.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cstddef>
 #include <cmath>
@@ -1065,8 +1067,10 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
     track.reserve(420'000, 650'000);
     trackBedMaterial.reserve(4'000,6'000);
     railHeadMaterial.reserve(6'000,9'000);
-    const double begin = std::max(0.0, anchorDistance - kTrackRadius);
-    const double end = std::min(route.lengthMetres(), anchorDistance + kTrackRadius);
+    // Rails, sleepers and ballast overrun both route endpoints to the terminus buffer stops.
+    const double begin = std::max(-kTerminalTrackOverrunMetres, anchorDistance - kTrackRadius);
+    const double end = std::min(route.lengthMetres()+kTerminalTrackOverrunMetres,
+                                anchorDistance + kTrackRadius);
     const double fastenerRadius = graphicsQuality_ == 0 ? 360.0
                                 : graphicsQuality_ == 1 ? 460.0 : 560.0;
     tracksideKilometrePosts_ = 0;
@@ -1406,6 +1410,8 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
     staticWorldRiverBridgeSections_ = 0;
     staticWorldViaductSections_ = 0;
     staticWorldBridgeAbutments_ = 0;
+    staticWorldTerminalBufferStops_ = 0;
+    staticWorldTerminalShedColumns_ = 0;
     staticWorldBridgeParapetPosts_ = 0;
     staticWorldFencePosts_ = 0;
     staticWorldPlatformSurfaceJoints_ = 0;
@@ -4833,6 +4839,32 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             // that ground instead of sitting on the former untextured, fixed-height apron.
             if (terminal)
             {
+                // Authored terminus composition: buffer stops on both tracks past the platform
+                // end, a train shed over the final stretch and a head house closing the tracks.
+                const auto terminalPoint = [&](double distance,double lateral) {
+                    return localRoutePoint(route,anchorDistance,distance,lateral);
+                };
+                const double pairLateral =
+                    route.parallelTrackLateralMetres(station.distanceMetres)*0.5;
+                for (double trackLateral : {0.0,route.parallelTrackLateralMetres(station.distanceMetres)})
+                {
+                    addBufferStop(mesh,terminalPoint,
+                                  station.distanceMetres-inward*kTerminalBufferOffset,
+                                  trackLateral,inward);
+                    ++staticWorldTerminalBufferStops_;
+                }
+                addTerminusHeadHouse(mesh,terminalPoint,station.distanceMetres,inward,pairLateral);
+                staticWorldTerminalShedColumns_ += addTrainShed(
+                    mesh,terminalPoint,station.distanceMetres,inward,pairLateral);
+                {
+                    std::string headHouseName = station.name;
+                    for (char& c : headHouseName) c = static_cast<char>(std::toupper(
+                        static_cast<unsigned char>(c)));
+                    addTrackFacingText(mesh,route,anchorDistance,headHouseName,
+                                       station.distanceMetres-inward*(kTerminalHeadHouseNear-0.45),
+                                       pairLateral,13.95f,static_cast<int>(inward),
+                                       Color(238,239,224,255),0.15f);
+                }
                 if (graphicsQuality_>=1)
                 {
                     // Terrain-conforming public apron on the authored endpoint continuation.
@@ -4896,6 +4928,11 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                             addForecourtBench(mesh,Matrix::CreateRotationY(pose.yaw+static_cast<float>(side)*kPi*0.5f)
                                 *Matrix::CreateTranslation(root));
                         }
+                    const auto rankPose=localRoutePoint(route,anchorDistance,
+                        station.distanceMetres-inward*55.0,side*23.5);
+                    addTaxiRank(mesh,[&](float along,float across) {
+                        return forecourtPoint(along,across)+Vector3{0,0.004f,0};
+                    },rankPose.yaw,static_cast<unsigned>(stationIndex));
                 }
                 // A restrained two-sided skyline gives the terminal apron depth even past the
                 // final route sample. These are deliberately distant blocks: nearby procedural
@@ -8498,6 +8535,8 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     stats.riverBridgeSections = staticWorldRiverBridgeSections_;
     stats.viaductSections = staticWorldViaductSections_;
     stats.bridgeAbutments = staticWorldBridgeAbutments_;
+    stats.terminalBufferStops = staticWorldTerminalBufferStops_;
+    stats.terminalShedColumns = staticWorldTerminalShedColumns_;
     stats.bridgeParapetPosts = staticWorldBridgeParapetPosts_;
     stats.fencePosts = staticWorldFencePosts_;
     stats.platformSurfaceJoints = staticWorldPlatformSurfaceJoints_;

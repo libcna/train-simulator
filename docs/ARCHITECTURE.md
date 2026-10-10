@@ -74,6 +74,12 @@ door reveals, roof crown with HVAC housing and pantographs, inter-car bellows an
 the cab nose, lamps, coupler, visor, gasket and wipers. Lamps use the unlit
 interior emitter batch; nothing is drawn with an extra call.
 
+`TerminalGeometry.hpp` authors both termini: buffer stops, the train shed, the
+head house and the forecourt taxi rank, placed from the station datum with the
+endpoint tangent extrapolation of `Route::relativePose`. The track batch overruns
+each route endpoint by `kTerminalTrackOverrunMetres` so the stopped consist and
+the buffer stops sit on real track.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed

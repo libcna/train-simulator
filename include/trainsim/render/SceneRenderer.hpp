@@ -130,6 +130,8 @@ struct RenderStats
     int riverBridgeSections = 0;
     int viaductSections = 0;
     int bridgeAbutments = 0;
+    int terminalBufferStops = 0;
+    int terminalShedColumns = 0;
     int bridgeParapetPosts = 0;
     int fencePosts = 0;
     int stationClockHands = 0;
@@ -388,6 +390,8 @@ private:
     int staticWorldRiverBridgeSections_ = 0;
     int staticWorldViaductSections_ = 0;
     int staticWorldBridgeAbutments_ = 0;
+    int staticWorldTerminalBufferStops_ = 0;
+    int staticWorldTerminalShedColumns_ = 0;
     int staticWorldBridgeParapetPosts_ = 0;
     int staticWorldFencePosts_ = 0;
     int staticWorldPlatformSurfaceJoints_ = 0;

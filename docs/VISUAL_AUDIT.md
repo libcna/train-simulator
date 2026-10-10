@@ -11,8 +11,8 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **122 addressed, 1 open**. ENV-001 through ENV-119 and ENV-121 through ENV-123 have
-repair evidence below; this does not close broader glazing or fabric realism.
+Current disposition: **123 addressed, 0 open**. Every finding has repair evidence below; this does
+not claim photographic realism, only that each listed visible problem was repaired and inspected.
 
 ## Evidence and limits
 
@@ -180,7 +180,7 @@ not exist. "Not visible" is limited to the cited view.
 | 117 ENV-117 | ADDRESSED | Mullions carry a dark exterior face continuous with the window band, so posts no longer contrast with the shell. | window-outside |
 | 118 ENV-118 | ADDRESSED | A dark perimeter seal and recessed header surround each doorway. | track-close |
 | 119 ENV-119 | ADDRESSED | Each window has a proud dark rubber gasket giving edge depth; the glazing tint itself is unchanged so scenery stays visible. | window-outside |
-| 120 ENV-120 | P4 | Terminal overview lacks the spatial identity of a terminus: one long shelter beside isolated building blocks and broad blank land. Develop an authored terminal composition. | terminal-wide |
+| 120 ENV-120 | ADDRESSED | Both termini now read as a terminus: tracks run to buffer stops, a train shed spans the final stretch, a head house with glazed concourse front, clock and name closes the tracks, and a taxi rank occupies the forecourt. | terminal-wide |
 
 ## Verification protocol
 
@@ -2026,4 +2026,40 @@ run replaced it and both stages were re-captured. 600-frame seated car 1 sample:
 **28.6 → 26.1 ms**, p99 **32.0 → 26.5 ms**, maximum **41.2 → 28.7 ms** (the
 before run hit a host-load spike; the figures are not a claimed speedup). Whole
 suite **67/67, 131.31 s**; unit tests **175/175**. Prefix:
-`train-exterior-`. ENV-105 to ENV-119 are addressed; ENV-120 remains open.
+`train-exterior-`. ENV-105 to ENV-119 are addressed.
+
+### Terminus composition: ENV-120
+
+The before images show the real defect behind the finding: the track batch
+began at route distance 0, so the rear 63 m of the stopped train stood on bare
+ground, with no buffer stop, no end building and the platform shelter trailing
+off into blank land. `TerminalGeometry.hpp` and the track builder now author
+both termini. Rails, sleepers and ballast overrun each route endpoint by 125 m
+on both tracks; friction buffer stops with sloped struts and a red/white beam
+stand 117 m beyond the datum, just inside the 120 m platform end. A train shed
+with paired columns every 11 m, eave beams, two sloped roof slabs and a glazed
+clerestory ridge spans both tracks from 30 m to 118 m beyond the datum, above
+the existing platform canopy. A head house closes the tracks at 124–146 m: a
+66 m masonry mass with corner pavilions and parapets, a glazed concourse front
+divided by mullions and transoms, an entrance canopy on posts, four doorways, a
+clock and the station name in track-facing lettering on the attic. On Medium/
+High the forecourt gains a taxi rank of four parked cars with roof signs and a
+rank post. `terminal_buffer_stops` and `terminal_shed_columns` are reported.
+
+Inspected matched [terminal wide before](../build/visual-audit/terminal-composition-terminal-wide-before.png) /
+[after](../build/visual-audit/terminal-composition-terminal-wide-after.png),
+[aerial before](../build/visual-audit/terminal-composition-terminal-aerial-before.png) /
+[after](../build/visual-audit/terminal-composition-terminal-aerial-after.png),
+the head-end view along the track, the platform view and both Westhaven
+counterparts. A unit test bounds the buffer stop, head house, shed and taxi
+rank at both endpoints. 600-frame terminal platform sample: **123 draws
+unchanged**, **1,555,460 → 1,589,674** triangles, **2 buffer stops**, **18
+shed columns**; steady mean **25.5 → 25.3 ms**, p95 **25.7 → 25.6 ms**, p99
+**27.0 → 26.0 ms**, maximum **29.9 → 26.1 ms**; initial rebuild **177.9 →
+168.1 ms** (run-to-run variation). The first build printed the head-house
+name mirrored; the glyph direction was flipped, the `after` set re-captured and
+the lettering checked with a probe at both termini (the re-capture's own
+performance run coincided with a host load spike, 447 ms rebuild, and is not
+used above). Whole suite on the final binary **67/67, 119.27 s**; unit tests
+**176/176**. Prefix: `terminal-composition-`. ENV-120 is addressed; no ranked
+finding remains open.

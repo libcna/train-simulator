@@ -18,6 +18,7 @@
 #include "trainsim/render/InteriorFittingsGeometry.hpp"
 #include "trainsim/render/ToiletGeometry.hpp"
 #include "trainsim/render/TrainExteriorGeometry.hpp"
+#include "trainsim/render/TerminalGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3888,5 +3889,64 @@ TEST_CASE("cab exterior projects forward of the nose with lamps in the emitter b
         }
         for (const auto& vertex : emitters.data().vertices)
             REQUIRE((vertex.position.Z-nose)*direction > 0.07f);
+    }
+}
+
+TEST_CASE("terminus kit closes the tracks beyond the platform with stops shed and head house")
+{
+    using namespace TrainSim::Render;
+    for (const double inward : {1.0,-1.0})
+    {
+        const double datum = inward > 0 ? 0.0 : 286'400.0;
+        MeshBuilder stops;
+        addBufferStop(stops,tunnelTestPoint,datum-inward*kTerminalBufferOffset,-2.5,inward);
+        float stopHighest = 0.0f;
+        for (const auto& vertex : stops.data().vertices)
+        {
+            REQUIRE(std::abs(vertex.position.X+2.5f) <= 1.1f);
+            REQUIRE(vertex.position.Y >= 0.1f);
+            REQUIRE((vertex.position.Z-static_cast<float>(datum))*inward <= -(kTerminalBufferOffset-3.0));
+            // Struts lean away from the train, 2.6 m beyond the beam.
+            REQUIRE((vertex.position.Z-static_cast<float>(datum))*inward >= -(kTerminalBufferOffset+3.2));
+            stopHighest = std::max(stopHighest,vertex.position.Y);
+        }
+        REQUIRE(stopHighest > 1.4f);
+        MeshBuilder house;
+        addTerminusHeadHouse(house,tunnelTestPoint,datum,inward,-2.5);
+        float left = 0.0f,right = 0.0f,top = 0.0f;
+        for (const auto& vertex : house.data().vertices)
+        {
+            left = std::min(left,vertex.position.X);
+            right = std::max(right,vertex.position.X);
+            top = std::max(top,vertex.position.Y);
+            const float along = (vertex.position.Z-static_cast<float>(datum))*static_cast<float>(inward);
+            REQUIRE(along <= -(kTerminalHeadHouseNear-5.0));
+            REQUIRE(along >= -(kTerminalHeadHouseFar+2.0));
+        }
+        REQUIRE(left < -30.0f);
+        REQUIRE(right > 25.0f);
+        REQUIRE(top > 15.0f);
+        MeshBuilder shed;
+        REQUIRE(addTrainShed(shed,tunnelTestPoint,datum,inward,-2.5) == 18);
+        for (const auto& vertex : shed.data().vertices)
+        {
+            REQUIRE(std::abs(vertex.position.X+2.5f) <= 16.2f);
+            const float along = (vertex.position.Z-static_cast<float>(datum))*static_cast<float>(inward);
+            REQUIRE(along <= -(kTerminalShedBegin-1.0));
+            REQUIRE(along >= -(kTerminalShedEnd+1.0));
+            // Only column feet and shafts reach below the canopy level; the roof clears it.
+            if (std::abs(std::abs(vertex.position.X+2.5f)-15.5f) > 0.6f)
+                REQUIRE(vertex.position.Y >= 7.1f);
+        }
+    }
+    MeshBuilder rank;
+    REQUIRE(addTaxiRank(rank,[](float along,float across) {
+        return Vector3{across,0.78f,along};
+    },0.0f,0U) == 4);
+    for (const auto& vertex : rank.data().vertices)
+    {
+        REQUIRE(vertex.position.Y >= 0.78f);
+        REQUIRE(vertex.position.X >= 19.0f);
+        REQUIRE(vertex.position.X <= 26.0f);
     }
 }

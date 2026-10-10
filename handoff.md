@@ -1,217 +1,168 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-10. Repository: `libcna/train-simulator`, branch `main`.
+Updated: 2026-10-10 (end of the second continuous visual session).
+Repository: `libcna/train-simulator`, branch `main`. Written for the next agent
+(expected: Codex, "astra high") starting from a fresh context.
 
-## Owner instruction at handoff
+## Owner instructions so far
 
-On 2026-10-09 the owner asked to finish the river-bank repair, write this
-English handoff, commit, push and stop. On 2026-10-10 the owner asked to resume
-from this document and continue the visual work until all findings are done;
-ENV-067 through ENV-119 and ENV-121 were repaired so far in that session. Treat each session's instruction as its own scope. The owner manages the application goal;
-do not block implementation on the goal service or create/change goals implicitly.
+- 2026-10-09: finish the river-bank repair, write this English handoff, commit,
+  push, stop. Done; that commit was the initial project snapshot.
+- 2026-10-10: resume from this document and continue the visual campaign until
+  every ranked finding is done, pushing after each group. Done: ENV-067 to
+  ENV-123 were repaired, committed and pushed one group at a time (see the Git
+  history). The owner then asked to finish the current item, rewrite this
+  handoff, commit, push and stop. **Do not continue work on your own; wait for
+  the owner's next instruction.** The owner manages the application goal; never
+  create or change goals implicitly.
+- The owner's conversation is Czech; all repository content, commit messages
+  and this document are English.
 
 ## What this project is
 
-A playable but unfinished C++23 first-person passenger simulator using CNA's
-OpenGL 3.3 renderer. The fictional Northern Valley Express traverses a 286.4 km,
-12-station route indefinitely, reversing at terminals. Six passenger cars,
+A playable but unfinished C++23 first-person passenger simulator on CNA's
+OpenGL 3.3 renderer. The fictional Northern Valley Express runs a 286.4 km,
+12-station route indefinitely, reversing at both termini. Six passenger cars,
 seating, gangways, toilet interactions, passenger/conductor CNA avatars, route
-map, passenger displays, generated railway audio and offline English announcements
-are integrated. This is not a driving game; the player stays aboard.
+map, passenger displays, generated railway audio and offline English
+announcements are integrated. The player stays aboard; it is not a driving game.
+Interactive launches open on a start menu (Start / Enter / Space; F12 quits);
+automated runs with `--frames`, `--run-seconds`, `--screenshot` or
+`--interaction-smoke` skip it.
 
-Read `README.md`, `docs/ARCHITECTURE.md`, `docs/VISUAL_AUDIT.md`,
-`docs/VISUAL_CAMPAIGN.md`, `docs/AUDIT.md`, and `bugs.md` before continuing.
-The visual campaign is not finished, and automated tests do not prove realism.
+Read, in this order: `README.md`, `docs/ARCHITECTURE.md`, `docs/VISUAL_AUDIT.md`,
+`docs/VISUAL_CAMPAIGN.md`, `docs/AUDIT.md`, `bugs.md`. Automated tests do not
+prove realism; only inspected engine screenshots do.
 
 ## Non-negotiable constraints
 
-- Repository content and commit messages: English. The owner's conversation is Czech.
-- CNA `next` at `97783d1e0`; sharp-runtime `next` at `21c06910` were the tested
-  sibling dependencies. Never edit, patch or commit either dependency. Record
-  probable dependency defects in `bugs.md`; implement workarounds in this project.
-- Develop/test desktop CNA **OPENGL33 only**. No alternative renderers, web/mobile,
-  or platform-expansion work. Driver logs may report GL 4.6 capability; CNA still
-  selects OPENGL33. Keep simulation renderer-independent.
-- C++23, MIT project license; preserve third-party font/asset notices in
-  `docs/ASSETS.md` and `assets/licenses/`.
-- Maximum **four compilation workers**. Mandatory system `/usr/bin/ccache`, shared
-  `CCACHE_DIR=/rv/cnaccache`, `CCACHE_BASEDIR=/rv`. Never create another cache or
-  change the shared cache size. Retry with elevated permissions if sandbox access
-  to the existing cache is rejected; do not silently disable ccache.
-- Use only the existing `build/`. No clean rebuild, duplicate dependency clone,
-  alternate ticket build tree or multi-gigabyte asset download without necessity.
-- Preserve unrelated work. Use `apply_patch` for source/document edits. Do not
-  spawn subagents unless the owner or applicable instructions explicitly authorize them.
+- Sibling dependencies `../cna` (CNA `next`) and `../sharp-runtime` are
+  immutable: never edit, patch, stash or commit in them. Record probable
+  dependency defects in `bugs.md`; implement workarounds here. Other agents work
+  in those checkouts concurrently; on 2026-10-10 `sharp-runtime` briefly failed
+  to compile mid-edit and recovered on its own. If that happens, wait and retry;
+  do not touch it.
+- Desktop CNA **OPENGL33 only**. No other renderers, web/mobile or platform
+  work. Keep simulation renderer-independent.
+- C++23, MIT project licence; keep third-party notices in `docs/ASSETS.md` and
+  `assets/licenses/`.
+- Build with at most **four compilation workers**, the system `/usr/bin/ccache`,
+  `CCACHE_DIR=/rv/cnaccache`, `CCACHE_BASEDIR=/rv`. Never create another cache
+  or change the shared cache size. Use only the existing `build/`; no clean
+  rebuilds, duplicate dependency clones or new build directories.
+- Never run two heavy jobs at once (build, CTest, GPU captures). Other agents
+  share the host; load averages above 20 were common on 2026-10-10 and distort
+  frame-time measurements.
+- Preserve unrelated work. Do not spawn subagents unless the owner says so.
 
 ## Build, run and verification
 
-Workspace used: `/rv/data/development/github.com/libcna/train-simulator`.
-Read applicable ancestor `AGENTS.md`; the owner's explicit four-worker limit
-overrides its generic unrestricted-parallelism advice.
-
 ```bash
-env CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv cmake --build build --parallel 4
-env CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv ccache --show-stats
-env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure
-./build/train-simulator
+export CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv
+cmake --build build --parallel 4                 # incremental; already configured
+./build/trainsim_render_tests                    # 176 render/geometry unit tests
+./build/trainsim_tests                           # 124 simulation unit tests
+env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure   # 67 tests, ~2 min
+./build/train-simulator                          # interactive play (start menu)
 ```
 
-The existing CMake C/C++ launcher is
-`/usr/bin/cmake;-E;env;CCACHE_BASEDIR=/rv;/usr/bin/ccache`.
-Use README configuration instructions only if genuinely needed; incremental
-builds already work. `-Wpedantic` warnings about dependency `__int128` are not a
-reason to modify sharp-runtime.
-
-For private hardware-GPU captures, without sending input to the owner's desktop:
+Private hardware-GPU captures (Radeon 780M via a private Weston/Xwayland; never
+touches the owner's desktop):
 
 ```bash
 env LP_NUM_THREADS=4 ../cna/tools/platform/run_gpu_tests_private.sh --exec \
-  env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
-  bash tools/capture_water_detail.sh after river-bank
+  env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy bash tools/<capture script>.sh after
 ```
 
-Run only one heavy job at a time. Use background execution/polling for long jobs
-and keep progress messages concise; do not block communication with long waits.
-The private Weston/Xwayland run uses Radeon 780M hardware. CTest offscreen cases
-use software Mesa. Private-compositor pacing around 26 ms is **not a 60 FPS claim**.
+CTest offscreen cases use software Mesa. Private-compositor frame pacing of
+about 26 ms is **not** a 60 FPS claim.
 
-## Audit workflow and evidence
+## Audit workflow and evidence (how every repair was done)
 
-`docs/VISUAL_AUDIT.md` is the authoritative ranked checklist and repair ledger.
-Its original 120 IDs are stable. Three screenshot discoveries extended scope to
-123: ENV-121 ceiling HVAC grilles, ENV-122 canopy/display intersection, ENV-123
-far-lake streamed-bank termination. Do not confuse `docs/AUDIT.md` (older general
-audit) with this screenshot-based list.
+`docs/VISUAL_AUDIT.md` is the authoritative ranked list and repair ledger: 123
+findings (ENV-001 to ENV-123), **all addressed with evidence** as of this
+handoff. Each evidence section names a capture prefix, the inspected matched
+before/after frames, the tests and a 600-frame stationary performance sample.
+Do not reopen closed IDs; a new visual pass starts from new screenshots and a
+new ranked list.
 
-Capture real engine images before implementation and after the final build;
-actually inspect them. Do not generate or paint substitute evidence. Scripts
-write binary SHA-256 receipts and refuse to overwrite a preserved `before`
-baseline. Never edit a shell capture script while it is running: that previously
-caused an EOF failure. Source edits during an old-binary capture are possible,
-but do not rebuild/replace that binary until the capture finishes.
+The repeatable method, to reuse for any future repair:
 
-QA screenshots and logs live under ignored `build/visual-audit/` and are local,
-not included in the Git push. Preserve them on this machine. A fresh clone can
-reproduce final captures using committed scripts but cannot reconstruct historical
-before binaries from this initial commit. The five `docs/screenshots/` images
-are earlier showcase captures, not current audit acceptance evidence.
+1. Write or reuse a `tools/capture_<topic>.sh` script (pattern: `before|after`
+   stage, optional prefix, fixed `--audit-camera` poses, a 600-frame
+   `--report-state` performance run, a binary SHA-256 receipt; refuses to
+   overwrite a preserved `before`).
+2. Capture `before` with the current binary and inspect the real images.
+3. Implement in a focused header under `include/trainsim/render/` and wire it
+   into `src/render/SceneRenderer.cpp`; add unit tests in
+   `tests/MeshBuilderTests.cpp`; expose a `--report-state` counter when a smoke
+   test can use it.
+4. Build, run both unit test binaries, capture `after`, inspect, compare
+   performance, run the whole CTest suite on the final binary, record
+   everything in `docs/VISUAL_AUDIT.md` (ranked row + evidence section),
+   `docs/ARCHITECTURE.md` and here, then commit and push.
+5. If a new pose is needed after the `before` stage, rebuild the old binary with
+   `git stash push -- include src tests` (never stash scripts or docs), capture
+   the new pose under a new prefix, pop and rebuild.
 
-Relevant capture scripts: `capture_station_detail.sh`, `capture_water_detail.sh`,
-`capture_urban_detail.sh`, the interior/window/seat-specific scripts, and
-`capture_visual_audit.sh` (original baseline; do not overwrite it).
+Audit camera: train-local metres, absolute render Y (seated eye 1.90 m,
+standing 2.36 m); yaw 0 looks toward negative Z, +90 toward positive X;
+positive pitch looks up; route distance grows toward local positive Z; the
+cars are centred at Z = -52.5 + 21·car (car 0..5); the cab bulkheads are at
+Z = ±63.2 and the noses at ±72.8. Station command-line indices are one-based.
+`--audit-camera` requires `--frames` and `--screenshot` (a performance run must
+not use it). Static captures disable avatars/audio and nearly freeze route time.
 
-Audit camera uses train-local metres and **absolute render Y**, not an offset
-above the floor. Seated eye is 1.90 m; standing eye is 2.36 m. Yaw 0 looks toward
-negative Z, +90 toward positive X; positive pitch looks up. Route distance grows
-toward local positive Z. Station command-line indices are one-based. Static
-audit captures deliberately disable avatars/audio and nearly freeze route time;
-they do not establish movement, physical mouse input or audio correctness.
+All QA images and logs are local, ignored files under `build/visual-audit/`;
+keep them. A fresh clone can reproduce `after` captures but not the historical
+`before` binaries.
 
-## Recent implementation map
+## Implementation map of the 2026-10-10 session (ENV-067 to ENV-123)
 
-- `StationGeometry.hpp` / `PlatformLayout.hpp`: canopy structural bays, lamps,
-  staggered paving, tactile relief, bins, fence endpoints, station glazing,
-  material families, clock turret and finished departure-board case. Display
-  position and text clear the canopy. The turret clock was previously inside
-  the solid tower; it now has an exposed face and service-time hands.
-- `StationSite.hpp` / `ForecourtGeometry.hpp`: both terminal forecourts, graded
-  paving, six planted beds and four benches, with deterministic feature
-  reservation. Non-overlapping grout strips fixed real depth artifacts.
-- `OpenGL33WaterEffect.*` / `WaterSurface.hpp`: one-pass Medium/High water with
-  filtered analytic ripple normals, clear-sky Fresnel and bounded time phases.
-  Low or shader-invalid fallback uses the original material. This is not actual
-  scene reflection/refraction. `water_shader_draws` exposes the chosen path.
-  Detached bright lake/river streak boxes were removed at all qualities.
-- `ShoreGeometry.hpp`: water-relative terrain contour clipping, rooted-bank
-  coordinate search and bounded shoreline irregularity. Terrain triangles are
-  split rather than overlaid, preserving area/planes/UVs/winding.
-  The completed river-bank repair adds independent bank phases and stable reed/
-  shrub groups in Medium/High; `river_bank_clumps` is regression-tested.
-- `LandscapeVariation.hpp::streamedBackdropRange`: 500 m background-only
-  terrain/water extensions beyond outer detail chunks, retaining seven simulation
-  chunks. This addresses ENV-123; it does not fix synchronous rebuild hitches.
-- `SceneRenderer.cpp` remains large. Keep new reusable geometry in focused headers
-  rather than expanding unrelated systems or moving rendering into simulation.
+New focused headers, each with unit tests, each wired into `SceneRenderer.cpp`:
 
-- `BridgeGeometry.hpp`: shared bridge parapet (upstand, coping, drip line, cable
-  trough, tubular two-rail handrail on 2.5 m posts; Low omits base plates) and
-  the viaduct valley profile (`viaductValleyTerrain`: bowl deepest at mid-span,
-  side spurs, zero weight at both abutments). `Route.hpp` exports the viaduct
-  extent constants. Viaduct piers thicken with height, gain footings and ties.
-  `bridge_parapet_posts` is reported; `tools/capture_bridge_detail.sh` captures
-  both crossings (extra valley/abutment views under the `viaduct-valley` prefix).
+| Header | Covers | Report counters / scripts |
+| --- | --- | --- |
+| `BridgeGeometry.hpp` | bridge parapets (upstand, coping, cable trough, tubular handrail on 2.5 m posts), viaduct valley profile (`viaductValleyTerrain`, bowl + spurs, seamless abutments), footed/tied piers | `bridge_parapet_posts`; `capture_bridge_detail.sh` (prefixes `bridge-parapet`, `viaduct-valley`) |
+| `TunnelGeometry.hpp` | precast lining (textured face in the concrete batch, ring/longitudinal joints, haunch), bracketed luminaires with seamless wash, handrail/cable tray, escape-route and hectometre signs (`Sim::kTunnelExtentsMetres`) | `tunnel_lining_rings`, `tunnel_marker_plates` (required by the tunnel smoke test); `capture_tunnel_detail.sh` (`tunnel-lining`, `tunnel-markers`) |
+| `TrackGeometry.hpp` + `makeBallastDetailImage` | angular ballast texture, sloped shoulders to a wobbling toe, chamfered monoblock sleepers inside the fastener radius, foot/web/head rail profile | `capture_track_detail.sh` (`track-surface`) |
+| `LinesideGeometry.hpp`, `SignalGeometry.hpp` | `addBarBetween` chord bars (catenary wires now follow curves), wire fences with strained ends, rebuilt colour-light signal (lens centres shared with the live aspect overlay) | `fence_posts`; `capture_lineside_detail.sh` (`lineside`) |
+| `InteriorFittingsGeometry.hpp` + `addSeatRearShell` | seat grip recess, literature pocket, pedestals, rack suitcases, cab-door hardware, extinguisher, intercom, seated fasteners, gangway plate, grab-rail caps, ceiling diffusers | `capture_interior_fittings.sh` (`interior-fittings`, `interior-close`), `capture_hvac_detail.sh` (`hvac-grille`, `hvac-close`) |
+| `ToiletGeometry.hpp` | toilet, support rail, paper dispenser, coves, vanity + sensor spout, gradient mirror, dispensers, threshold | `capture_toilet_detail.sh` (`toilet-fittings`; its `mirror` pose is invalid, see the audit) |
+| `TrainExteriorGeometry.hpp` | lower bodyside with bogie cut-outs, bogies, underframe modules, livery bands, window gaskets, mullion faces, door reveals, roof crown + HVAC + pantographs (cars 2 and 5), inter-car bellows, cab nose/lamps/coupler/visor/gasket/wipers | `capture_train_exterior.sh` (`train-exterior`) |
+| `TerminalGeometry.hpp` | buffer stops, train shed, head house with name lettering, forecourt taxi rank; the track batch now overruns both route ends by 125 m (`kTerminalTrackOverrunMetres`) | `terminal_buffer_stops`, `terminal_shed_columns`; `capture_terminal_composition.sh` (`terminal-composition`) |
 
-- `TunnelGeometry.hpp`: textured precast lining with ring/longitudinal joints,
-  haunch, bracketed handrail/cable tray, bracketed wall luminaires with a
-  seamless gradient wash, escape-route and hectometre signs per niche bay.
-  `Route.hpp` exports `kTunnelExtentsMetres`. `tools/capture_tunnel_detail.sh`
-  captures the tunnel (`tunnel-markers` prefix adds the 123.0 km bay views).
+Also: `Route.hpp` exports `kValleyViaductBegin/EndMetres` and
+`kTunnelExtentsMetres`. `SceneRenderer.cpp` remains large (~9,300 lines); keep
+adding reusable geometry in headers rather than inline.
 
-- `TrackGeometry.hpp`: ballast toe wobble, chamfered monoblock sleepers inside
-  the fastener radius, foot/web/head rail profile; sloped ballast shoulders and
-  the reworked angular ballast texture. `tools/capture_track_detail.sh`.
+## Known open issues (outside the ranked list)
 
-- `LinesideGeometry.hpp` / `SignalGeometry.hpp`: chord bars (catenary wires now
-  follow curves), wire fences with strained ends, rebuilt colour-light signal.
-  `tools/capture_lineside_detail.sh`.
+1. **Synchronous streaming hitches.** Initial world rebuilds measure
+   100–450 ms depending on location and host load (viaduct ~145 ms, terminal
+   ~170 ms, up to 447 ms under heavy host load). The earlier 1,800-frame moving
+   soak had p99 106 ms. Staged/cached generation without CNA edits is the next
+   engineering item; see `docs/VISUAL_CAMPAIGN.md`.
+2. **Intermittent physical-mouse camera freeze** reported by the owner; not
+   reproduced by automated runs. Needs a genuinely long keyboard/mouse play
+   test across all six cars, seating, toilet and doors when authorised.
+3. **No hours-long stability/leak run** exists. Do not claim one.
+4. Several frame-time comparisons on 2026-10-10 were distorted by host load
+   from other agents (documented per section). Re-measure on a quiet host before
+   treating any p95/p99 shift as a regression.
+5. Remaining visual gaps are design-level (stylised avatars, repetitive
+   procedural buildings, flat vertex-colour materials in places); they are not
+   listed defects and need a new screenshot-based ranking if the owner wants
+   another pass.
 
-- `InteriorFittingsGeometry.hpp` plus `addSeatRearShell`: grip recess, literature
-  pocket, pedestals, suitcases, cab-door hardware, extinguisher, intercom,
-  fasteners, gangway plate and rail caps. `tools/capture_interior_fittings.sh`
-  (`interior-close` prefix adds luggage/cab-door/end-wall close views).
+## Final verification at this handoff
 
-Latest evidence prefixes: `terminal-forecourt-`, `water-surface-`, `lake-bank-`,
-`river-bank-`, `bridge-parapet-`, `viaduct-valley-`, `tunnel-lining-`,
-`tunnel-markers-`, `track-surface-`, `lineside-`, `interior-fittings-`,
-`interior-close-`, `toilet-fittings-` (`ToiletGeometry.hpp`,
-`tools/capture_toilet_detail.sh`), `hvac-grille-` and `hvac-close-`
-(`addCeilingDiffuser`, `tools/capture_hvac_detail.sh`), and `train-exterior-`
-(`TrainExteriorGeometry.hpp`, `tools/capture_train_exterior.sh`). The terminal's comparable before benchmark is specifically
-`terminal-forecourt-terminal-performance-before.log`; the earlier similarly
-named baseline measured Stonebridge and is not comparable. The lake's
-`far-bank-before` camera lay below the old coarse terrain and was excluded from
-acceptance; use the valid near-bank, passenger and oblique pairs.
-
-## Remaining risks and next work after a new owner request
-
-1. Finish the ranked visual audit with the terminal composition ENV-120. ENV-121 remains open. ENV-120 is the broader terminal
-   composition, not closed merely by the forecourt repair.
-2. The owner reported an intermittent physical-mouse camera freeze. It remains
-   unresolved/not reproduced by the latest visual work. Automated interaction
-   tests do not close it. Conduct a genuinely long keyboard/mouse play test,
-   traversing all six cars, seating/standing, toilet and doors when authorized.
-3. Synchronous streaming hitches remain open. Earlier 1,800-frame, 8x-time,
-   avatar-enabled rural run had p99 106.2 ms, maximum 124.7 ms, largest rebuild
-   114.5 ms and peak RSS 719,100 KiB. See `docs/VISUAL_CAMPAIGN.md`. Frozen-route
-   averages hide this problem. Added detail has increased some initial rebuild
-   times; measure moving runs and pursue staged/cached generation without CNA edits.
-4. No hours-long leak/stability proof or physical-input play test was completed
-   in this latest continuation. Do not claim otherwise. Keep periodic moving,
-   avatar-enabled and endpoint-reversal tests alongside visual captures.
-
-Do not infer that the entire campaign is done from a clean Git tree.
-
-## Final verification and disposition
-
-- **122 addressed / 1 open / 123 total findings.** ENV-001 through ENV-119 and
-  ENV-121 through ENV-123 have evidence; ENV-120 remains.
-- Final incremental build succeeded with shared system ccache and four workers.
-  During the session the sibling `sharp-runtime` checkout was briefly being
-  edited by someone else and failed to compile; it recovered on its own and was
-  not touched from this project.
-- Each repair's whole CTest run on its final binary is logged as
-  `build/visual-audit/<prefix>-full-tests.log` (latest: `train-exterior-`,
-  67/67). Render unit tests: 175/175 after the exterior work.
-- Final actual GPU screenshots were inspected for every repair, matched against
-  preserved before images; see the audit's evidence sections and prefixes.
-- The latest 600-frame tunnel sample: **87 → 89 draws**, **783,628 → 839,908
-  triangles**; steady mean **25.4 → 25.4 ms**, p99 **26.8 → 27.2 ms**, maximum
-  **32.5 → 32.2 ms**; initial rebuild **17.6 → 22.9 ms**. The viaduct sample's
-  initial rebuild is **145.6 ms** (synchronous generation cost, still open). None
-  of this replaces a moving or long physical-input test.
-- CNA and sharp-runtime working trees remained clean. No dependency modifications.
-- The repository history starts with the 2026-10-09 initial snapshot; later
-  commits are ordinary diffs. Ignored build products, runtime configs, logs and
-  audit captures are excluded from every commit.
-- Verify what is actually on `origin/main` with `git log -1` and
-  `git status -sb`; do not assume push state from this document.
+- Working tree committed on `main` and pushed; verify with `git log -1` and
+  `git status -sb` rather than trusting this document.
+- Last whole CTest run on the final binary: **67/67 passed, 119.27 s**
+  (`build/visual-audit/terminal-composition-full-tests.log`). Render unit tests
+  176/176, simulation unit tests 124/124.
+- Last inspected engine images: `terminal-composition-*-after.png` plus a
+  head-house lettering probe confirming the station names read correctly at
+  both termini.
+- CNA and sharp-runtime working trees were not modified by this project.

@@ -58,3 +58,16 @@ inspected with avatars present. The issue is project-side synchronous rebuild
 work; no dependency patch or unproven CNA bug is asserted. Continue the ranked
 visual repairs while monitoring geometry growth; staged/cached streaming remains
 necessary follow-up before claiming polished sustained performance.
+
+## Campaign status, 2026-10-10
+
+Every finding ENV-001 to ENV-123 now has a repair evidence section in
+`VISUAL_AUDIT.md`, each with matched before/after engine captures, unit or smoke
+tests and a 600-frame stationary performance sample. The second continuous run
+(ENV-067 onward) covered bridges and the viaduct valley, tunnels, track, lineside
+fences, signals and catenary, close seat/vestibule/gangway fittings, the toilet
+compartment, HVAC diffusers, the train exterior and both terminus compositions.
+Open items outside the ranked list remain: synchronous streaming hitches, the
+reported intermittent physical-mouse freeze and the absence of an hours-long
+stability run. The campaign's terminal condition (verified closure of every
+listed finding) is met; it is not a claim of photographic realism.

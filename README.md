@@ -12,7 +12,9 @@ and scenery are improving, but repetitive geometry and stylized avatars remain s
 See the evidence and open findings in [the realism audit](docs/AUDIT.md); passing automated tests
 does not certify visual realism or resolve the reported intermittent physical-mouse freeze.
 
-The current ranked screenshot campaign is tracked in [the visual audit](docs/VISUAL_AUDIT.md).
+The ranked screenshot campaign is tracked in [the visual audit](docs/VISUAL_AUDIT.md); all 123
+listed findings have before/after engine evidence as of 2026-10-10. That closes the listed
+defects, not visual realism in general.
 See [the development handoff](handoff.md) for verified progress, remaining work and build constraints.
 
 ## Screenshots
@@ -333,7 +335,7 @@ lifecycle issues; ordinary play and the showcase captures keep the complete avat
 For repeatable environment QA, `--audit-camera X Y Z YAW PITCH` overrides only the
 render camera (train-local metres, render-space height and angles in degrees).
 It requires `--frames` and `--screenshot`; normal gameplay still cannot leave the
-train. See the [120-finding visual audit](docs/VISUAL_AUDIT.md) and
+train. See the [123-finding visual audit](docs/VISUAL_AUDIT.md) and
 `tools/capture_visual_audit.sh` for the baseline capture poses and repair evidence.
 
 For an intermittent camera/input issue, launch normal play with
