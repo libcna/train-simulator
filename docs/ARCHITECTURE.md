@@ -63,6 +63,10 @@ gangway bridge plate and grab-rail end caps. Seat grip recess and literature
 pocket construction stay in `addSeatRearShell`, bounded by the existing rear
 envelope and triangle budget tests.
 
+`ToiletGeometry.hpp` builds the accessible compartment's fittings (toilet, support
+rail, paper dispenser, floor coves, sink vanity and spout, mirror, dispensers,
+threshold) in absolute train-local coordinates within the compartment envelope.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed

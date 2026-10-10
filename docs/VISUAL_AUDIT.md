@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **94 addressed, 29 open**. ENV-001 through ENV-092, ENV-122 and ENV-123 have
+Current disposition: **106 addressed, 17 open**. ENV-001 through ENV-104, ENV-122 and ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -152,18 +152,18 @@ not exist. "Not visible" is limited to the cited view.
 | 090 ENV-090 | ADDRESSED | Fasteners are 14 mm heads close to the panel tone, seated in a darker countersink ring. | vestibule |
 | 091 ENV-091 | ADDRESSED | The bridge plate is a crowned plate with fine lengthwise grooves, hinge lines and yellow nosings instead of raised transverse bars. | gangway |
 | 092 ENV-092 | ADDRESSED | Both grab rails end in domed caps above and below their wall mounts. | gangway |
-| 093 ENV-093 | P3 | Toilet fixture looks like a household cistern/bowl, not a compact train installation. Redesign the visible housing coherently. | toilet |
-| 094 ENV-094 | P3 | Toilet bowl has weak separation of seat/lid/rim. Make those basic parts legible. | toilet |
-| 095 ENV-095 | P3 | Toilet flush control is not recognizable in the fixture view. Add a visible labelled control. | toilet |
-| 096 ENV-096 | P3 | Toilet support/grab handle is a yellow rectangular slab. Replace with a plausible rounded support assembly. | toilet |
-| 097 ENV-097 | P3 | No paper dispenser is visible around the bowl in the compartment view. Add the expected reachable fixture. | toilet |
-| 098 ENV-098 | P3 | Toilet wall/floor joints have bare sharp edges rather than sanitary cove/seal treatment. Close and finish those joints. | toilet |
-| 099 ENV-099 | P3 | Sink appears as a small floating white basin with no support/plumbing enclosure. Add a compact railway vanity/support. | sink |
-| 100 ENV-100 | P3 | Sink faucet is an undifferentiated pale shape with no recognizable lever/sensor. Improve metal and control cues. | sink |
-| 101 ENV-101 | P3 | Mirror is an opaque teal rectangle with no mirror-like approximation. Add a restrained fake reflection, not a costly real-time requirement. | sink |
-| 102 ENV-102 | P3 | Soap/towel fitting is an unlabelled white cuboid with no visible dispensing slot. Make its function recognizable. | sink |
-| 103 ENV-103 | P3 | Sink basin drain reads as a flat disc without a strainer/outlet cue. Improve this near-interaction detail. | sink |
-| 104 ENV-104 | P3 | WC doorway has a sharp unexplained floor-material patch/transition. Integrate the threshold and compartment floor. | sink |
+| 093 ENV-093 | ADDRESSED | A shrouded pedestal, oval bowl and stainless cistern cover against the end wall read as a compact railway installation. | toilet |
+| 094 ENV-094 | ADDRESSED | The rim, a flat seat ring with hinge block and a raised lid are separate, differently toned parts. | toilet |
+| 095 ENV-095 | ADDRESSED | A round flush button in a dark bezel with a label plate sits on the cistern cover above the lid. | toilet |
+| 096 ENV-096 | ADDRESSED | The support is a rounded yellow tube with a return and wall brackets. | toilet |
+| 097 ENV-097 | ADDRESSED | A rounded dispenser with a visible roll end and hanging tongue sits on the wall beside the bowl. | toilet |
+| 098 ENV-098 | ADDRESSED | A 45-degree sanitary cove runs along all four wall/floor junctions below the skirting band. | toilet |
+| 099 ENV-099 | ADDRESSED | The basin sits in a counter with a rear upstand over an enclosed cupboard with kick recess and waste flap. | sink |
+| 100 ENV-100 | ADDRESSED | A chrome post carries a horizontal sensor spout with a dark sensor window and aerator on a base ring. | sink |
+| 101 ENV-101 | ADDRESSED | The mirror shows a vertical gradient from the pale ceiling tone to the teal band with a slanted highlight inside bevelled edges. | sink |
+| 102 ENV-102 | ADDRESSED | The soap dispenser has a sight window, push plate and nozzle; a towel dispenser with slot and hanging towel sits beside it. | sink |
+| 103 ENV-103 | ADDRESSED | The drain is a chrome strainer ring with a dark outlet. | sink |
+| 104 ENV-104 | ADDRESSED | A brushed threshold plate with short ramps and a seal line joins the compartment floor to the vestibule floor. | sink |
 | 104b ENV-121 | P3 | Close ceiling HVAC grilles are thick featureless blocks with rectangular dark slots and no finished service frame. Refine the grille profile, louvres and attachment cues. New finding, queued with close-inspection fittings. | ceiling-fixture-ceiling-before, ceiling-fixture-ceiling-after |
 | 105 ENV-105 | P4 | Own-train side is mostly plain grey horizontal bands without a coherent exterior livery. Design an original service identity. | train-side |
 | 106 ENV-106 | P4 | Own-train bogies/wheels are not visible beneath the body, which appears to sit directly on a black strip. Model recognizable running gear. | train-side, train-front |
@@ -1939,5 +1939,35 @@ run (`interior-close-performance-after.log` of that pass was overwritten by the
 final capture), and the geometry delta is 0.7 %, so the slower figures are
 attributed to host load rather than the fittings. Re-measure on a quiet host
 before treating this as a regression. Prefixes: `interior-fittings-`,
-`interior-close-`. ENV-081 to ENV-092 are addressed; ENV-093 onward and ENV-121
-remain open.
+`interior-close-`. ENV-081 to ENV-092 are addressed.
+
+### Accessible toilet compartment: ENV-093 to ENV-104
+
+`ToiletGeometry.hpp` replaces the household-style fixtures. The toilet is a
+shrouded pedestal with a dark kick recess, an oval bowl (the shared
+`addSanitaryBowl`), a flat seat ring with hinge block, a raised lid and a
+stainless cistern cover carrying a bezelled flush button and label plate. The
+support is a rounded tube with a return and brackets; a paper dispenser with a
+visible roll end and tongue sits beside the bowl; 45-degree coves close all four
+wall/floor junctions. The basin now sits in a counter with a rear upstand over
+an enclosed vanity with kick recess and waste flap, under a chrome post and
+horizontal sensor spout with sensor window and aerator, with a strainer ring and
+dark outlet in the drain. The mirror keeps its frame, gains bevels and shows a
+ceiling-to-teal gradient with a slanted highlight; soap and towel dispensers have
+a sight window, push plate, nozzle, slot and hanging towel. A brushed threshold
+plate with ramps and a seal joins the two floors at the doorway. Alarm call
+point, bin, pull cord and grille are unchanged.
+
+Inspected matched [toilet before](../build/visual-audit/toilet-fittings-toilet-before.png) /
+[after](../build/visual-audit/toilet-fittings-toilet-after.png),
+[sink before](../build/visual-audit/toilet-fittings-sink-before.png) /
+[after](../build/visual-audit/toilet-fittings-sink-after.png), bowl close and
+side, sink close, flush/dispenser and threshold views. The `mirror` pose in the
+capture script lands inside the vanity and shows a flat surface in both stages;
+it is not acceptance evidence and the sink view covers the mirror. Two new unit
+tests bound every fitting inside the compartment envelope and check that the
+mirror gradient is paler toward the ceiling. 600-frame seated car 4 sample:
+**94 draws unchanged**, **1,432,962 → 1,433,892** triangles; steady mean
+**25.4 → 25.4 ms**, p95 **25.9 → 26.1 ms**, p99 **26.2 → 26.3 ms**, maximum
+**36.7 → 30.5 ms**. Prefix: `toilet-fittings-`. ENV-093 to ENV-104 are
+addressed; ENV-105 onward and ENV-121 remain open.

@@ -16,6 +16,7 @@
 #include "trainsim/render/LinesideGeometry.hpp"
 #include "trainsim/render/SignalGeometry.hpp"
 #include "trainsim/render/InteriorFittingsGeometry.hpp"
+#include "trainsim/render/ToiletGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3736,4 +3737,56 @@ TEST_CASE("gangway bridge plate grooves stay flush and the emergency intercom is
         REQUIRE(vertex.position.Z <= 63.08f-0.020f+1.0e-5f);
         REQUIRE(vertex.position.Z >= 63.08f-0.075f-0.045f);
     }
+}
+
+TEST_CASE("toilet compartment fittings stay inside the compartment and off the floor")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder mesh;
+    addTrainToilet(mesh);
+    addToiletSupportRail(mesh);
+    addPaperDispenser(mesh);
+    addToiletFloorCove(mesh);
+    addSinkVanity(mesh);
+    addToiletMirror(mesh);
+    addWashroomDispensers(mesh);
+    REQUIRE(mesh.data().indices.size()/3U < 4'000U);
+    for (const auto& vertex : mesh.data().vertices)
+    {
+        REQUIRE(vertex.position.X >= 0.40f);
+        REQUIRE(vertex.position.X <= 1.351f);
+        REQUIRE(vertex.position.Y >= kToiletFloorY-1.0e-4f);
+        REQUIRE(vertex.position.Y <= 2.20f);
+        REQUIRE(vertex.position.Z >= 3.95f);
+        REQUIRE(vertex.position.Z <= 8.0f);
+    }
+    MeshBuilder threshold;
+    addToiletThreshold(threshold);
+    for (const auto& vertex : threshold.data().vertices)
+    {
+        REQUIRE(vertex.position.X >= 0.30f-1.0e-5f);
+        REQUIRE(vertex.position.X <= 0.50f+1.0e-5f);
+        REQUIRE(vertex.position.Y <= kToiletFloorY+0.0141f);
+        REQUIRE(vertex.position.Z >= 3.55f);
+        REQUIRE(vertex.position.Z <= 4.59f);
+    }
+}
+
+TEST_CASE("toilet mirror gradient is paler toward the ceiling")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder mesh;
+    addToiletMirror(mesh);
+    int topLuma = 0,bottomLuma = 0;
+    for (const auto& vertex : mesh.data().vertices)
+    {
+        if (std::abs(vertex.position.X-1.322f) > 0.002f) continue;
+        const int r = static_cast<int>(vertex.color&0xffU);
+        const int g = static_cast<int>((vertex.color>>8U)&0xffU);
+        const int b = static_cast<int>((vertex.color>>16U)&0xffU);
+        const int luma = r+g+b;
+        if (vertex.position.Y > 2.0f) topLuma = std::max(topLuma,luma);
+        if (vertex.position.Y < 1.1f && vertex.position.Z < 4.5f) bottomLuma = std::max(bottomLuma,luma);
+    }
+    REQUIRE(topLuma > bottomLuma+100);
 }

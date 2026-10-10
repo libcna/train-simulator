@@ -7,6 +7,7 @@
 #include "trainsim/render/LinesideGeometry.hpp"
 #include "trainsim/render/SignalGeometry.hpp"
 #include "trainsim/render/InteriorFittingsGeometry.hpp"
+#include "trainsim/render/ToiletGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -6973,95 +6974,23 @@ void SceneRenderer::buildInterior()
         mesh.addBox(Vector3{0.56f,0.098f,z},Vector3{1.23f,0.102f,z+0.035f},
                     Color(94,131,139,255));
 
-    // Rounded sanitary geometry keeps this frequently inspected compartment from reading as a
-    // stack of crates while remaining inexpensive and part of the single interior batch.
-    const auto sanitaryBowl = [&mesh](Vector3 centre, float rx, float rz, float depth) {
-        constexpr int sides = 24;
-        const auto point = [=](int index, float radius, float y) {
-            const float angle = static_cast<float>(index)*2.0f*kPi/sides;
-            return Vector3{centre.X+rx*radius*std::cos(angle),centre.Y+y,
-                           centre.Z+rz*radius*std::sin(angle)};
-        };
-        for (int i = 0; i < sides; ++i)
-        {
-            const auto normal = [=](int index, bool inside) {
-                const float angle = static_cast<float>(index)*2.0f*kPi/sides;
-                const float slope = inside ? 0.42f/(depth*0.73f-0.012f) : 0.48f/depth;
-                const float sign = inside ? -1.0f : 1.0f;
-                return Vector3{sign*std::cos(angle)/rx,-sign*slope,
-                               sign*std::sin(angle)/rz};
-            };
-            const Vector3 outer = point(i,1.0f,0.0f);
-            const Vector3 nextOuter = point(i+1,1.0f,0.0f);
-            const Vector3 inner = point(i,0.76f,-0.012f);
-            const Vector3 nextInner = point(i+1,0.76f,-0.012f);
-            const Vector3 bottom = point(i,0.34f,-depth*0.73f);
-            const Vector3 nextBottom = point(i+1,0.34f,-depth*0.73f);
-            mesh.addQuad(point(i,0.52f,-depth),outer,nextOuter,
-                         point(i+1,0.52f,-depth),Color(221,225,221,255),
-                         normal(i,false),normal(i,false),normal(i+1,false),normal(i+1,false));
-            mesh.addQuad(outer,inner,nextInner,nextOuter,Color(242,243,236,255));
-            mesh.addQuad(inner,bottom,nextBottom,nextInner,Color(190,204,203,255),
-                         normal(i,true),normal(i,true),normal(i+1,true),normal(i+1,true));
-            mesh.addTriangle(Vector3{centre.X,centre.Y-depth*0.73f,centre.Z},
-                             nextBottom,bottom,Color(120,148,151,255));
-        }
-    };
-    mesh.addEllipsoid(Vector3{1.04f,0.17f,7.59f},Vector3{0.145f,0.17f,0.19f},16,8,
-                      Color(222,227,222,255),true);
-    sanitaryBowl(Vector3{1.04f,0.57f,7.50f},0.27f,0.32f,0.25f);
-    mesh.addRoundedBoxXY(Vector3{0.83f,0.56f,7.70f}, Vector3{1.25f,0.94f,7.91f},
-                0.055f,3,Color(232,233,226,255));
-    mesh.addBox(Vector3{0.96f,0.945f,7.76f}, Vector3{1.12f,0.965f,7.84f},
-                Color(165,174,172,255));
-    // Flush plate and hygienic paper dispenser remain reachable from the transfer side.
-    mesh.addBox(Vector3{0.91f,1.09f,7.90f},Vector3{1.17f,1.28f,7.98f},
-                Color(61,105,115,255));
-    mesh.addBox(Vector3{0.98f,1.145f,7.895f},Vector3{1.10f,1.225f,7.905f},
-                Color(214,222,219,255));
-    mesh.addBox(Vector3{0.445f,0.82f,6.55f},Vector3{0.52f,1.20f,6.94f},
-                Color(224,229,226,255));
-    mesh.addBox(Vector3{0.515f,0.89f,6.62f},Vector3{0.53f,1.10f,6.87f},
-                Color(58,78,83,255));
-
-    // Compact sink and faucet beside the entrance.
-    sanitaryBowl(Vector3{1.04f,0.89f,4.25f},0.25f,0.21f,0.15f);
-    mesh.addRoundedBoxXZ(Vector3{0.82f,0.83f,4.00f},Vector3{1.28f,0.89f,4.105f},
-                         0.025f,3,Color(224,230,230,255));
-    mesh.addBox(Vector3{1.18f,0.69f,4.16f},Vector3{1.345f,0.79f,4.32f},
-                Color(170,181,180,255));
-    mesh.addDiscXZ(Vector3{1.04f,0.782f,4.25f},0.026f,16,Color(76,88,90,255));
-    mesh.addCylinder(Vector3{1.05f,0.89f,4.06f}, 0.025f, 0.18f, 12,
-                     Color(167,174,172,255));
-    mesh.addRoundedBoxXZ(Vector3{1.02f,1.03f,4.035f},Vector3{1.08f,1.075f,4.235f},
-                         0.024f,3,Color(181,188,186,255));
-    mesh.addCylinder(Vector3{1.05f,1.01f,4.21f},0.019f,0.023f,12,
-                     Color(74,84,86,255));
-    // The mirror sits just inside the wall surface; placing it within the wall thickness would
-    // make the opaque wall correctly occlude it from the compartment.
-    mesh.addBox(Vector3{1.325f,1.05f,4.00f}, Vector3{1.345f,2.10f,4.92f},
-                Color(82,145,166,255));
-    mesh.addBox(Vector3{1.315f,1.88f,4.10f}, Vector3{1.322f,2.02f,4.80f},
-                Color(207,226,229,255));
-    const Color mirrorFrame(164,176,176,255);
-    mesh.addBox(Vector3{1.305f,1.00f,3.96f},Vector3{1.350f,1.06f,4.96f},mirrorFrame);
-    mesh.addBox(Vector3{1.305f,2.09f,3.96f},Vector3{1.350f,2.15f,4.96f},mirrorFrame);
-    mesh.addBox(Vector3{1.305f,1.00f,3.96f},Vector3{1.350f,2.15f,4.02f},mirrorFrame);
-    mesh.addBox(Vector3{1.305f,1.00f,4.90f},Vector3{1.350f,2.15f,4.96f},mirrorFrame);
-
-    // Accessible fittings: contrasting support rail, alarm call point, soap and waste bin.
-    mesh.addBox(Vector3{0.425f,0.98f,6.20f}, Vector3{0.465f,1.06f,7.28f},
-                Color(231,187,48,255));
-    mesh.addBox(Vector3{0.425f,0.62f,7.20f}, Vector3{0.465f,1.06f,7.28f},
-                Color(231,187,48,255));
+    // Sanitary fittings come from ToiletGeometry.hpp: compact wall-hung toilet with seat, lid,
+    // cistern cover and flush button, tubular support rail, paper dispenser, floor coves, vanity
+    // with sensor spout and strainer, gradient mirror, soap/towel dispensers and the threshold.
+    addTrainToilet(mesh);
+    addToiletSupportRail(mesh);
+    addPaperDispenser(mesh);
+    addToiletFloorCove(mesh);
+    addSinkVanity(mesh);
+    addSanitaryBowl(mesh,Vector3{1.04f,0.89f,4.25f},0.25f,0.21f,0.15f);
+    addToiletMirror(mesh);
+    addWashroomDispensers(mesh);
+    addToiletThreshold(mesh);
+    // Alarm call point and waste bin remain as before.
     mesh.addBox(Vector3{0.410f,1.17f,5.43f}, Vector3{0.470f,1.43f,5.67f},
                 Color(205,51,45,255));
     mesh.addBox(Vector3{0.471f,1.245f,5.495f}, Vector3{0.481f,1.355f,5.605f},
                 Color(248,213,63,255));
-    mesh.addBox(Vector3{1.285f,1.12f,4.92f}, Vector3{1.345f,1.46f,5.18f},
-                Color(224,229,226,255));
-    mesh.addBox(Vector3{1.275f,1.17f,5.00f}, Vector3{1.284f,1.36f,5.10f},
-                Color(61,132,151,255));
     mesh.addBox(Vector3{0.48f,0.09f,5.02f}, Vector3{0.73f,0.58f,5.48f},
                 Color(118,130,132,255));
     mesh.addBox(Vector3{0.50f,0.56f,5.06f}, Vector3{0.71f,0.59f,5.44f},
