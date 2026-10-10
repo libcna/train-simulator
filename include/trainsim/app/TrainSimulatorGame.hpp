@@ -100,6 +100,8 @@ private:
     void runInteractionSmoke();
     void drawUi();
     void drawMap();
+    void drawStartMenu();
+    void leaveStartMenu();
     void drawPanel(int x, int y, int width, int height,
                    const Microsoft::Xna::Framework::Color& color);
     void drawText(const std::string& text, float x, float y,
@@ -133,6 +135,7 @@ private:
     std::chrono::steady_clock::time_point lastInputTrace_{};
     bool paused_ = false;
     int pauseSelection_ = 0;
+    bool startMenu_ = false;
     bool showMap_ = false;
     bool showHelp_ = false;
     bool showDebug_ = false;

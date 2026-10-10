@@ -115,6 +115,28 @@ std::string wrapMonospaceWords(std::string_view text, std::size_t maximumColumns
     }
     return wrapped;
 }
+
+// The launch menu's only action. Drawing and mouse hit-testing share this so the clickable area
+// always matches the painted button at any window size.
+struct StartButton
+{
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+
+    [[nodiscard]] bool contains(int pointX, int pointY) const noexcept
+    {
+        return pointX >= x && pointX < x+width && pointY >= y && pointY < y+height;
+    }
+};
+
+StartButton startButton(int viewportWidth, int viewportHeight)
+{
+    constexpr int width = 280;
+    constexpr int height = 64;
+    return {(viewportWidth-width)/2, viewportHeight/2+10, width, height};
+}
 }
 
 TrainSimulatorGame::TrainSimulatorGame(LaunchOptions options)
@@ -141,6 +163,10 @@ TrainSimulatorGame::TrainSimulatorGame(LaunchOptions options)
     showDebug_ = options_.startWithDebug;
     showPassengerHud_ = options_.startWithPassengerHud;
     paused_ = options_.startPaused;
+    // An interactive launch opens on the start menu. Every automated run (finite frames, timed
+    // runs, screenshots and the interaction smoke) keeps starting directly aboard the train.
+    startMenu_ = options_.frameLimit == 0 && options_.runSeconds == 0.0
+        && options_.screenshotPath.empty() && !options_.interactionSmoke;
     if (options_.startAtSignal)
         service_.teleportToRouteDistance(220.0,1);
     else if (options_.startRouteKilometres.has_value())
@@ -686,7 +712,7 @@ void TrainSimulatorGame::LoadContent()
             Audio::TrainAudioSettings{settings_.masterVolume, settings_.announcementVolume,
                                       settings_.passengerVolume, settings_.trainVolume},
             service_.state().doorsOpen, toiletDoorEffectivelyOpen());
-        audio_->setPaused(paused_);
+        audio_->setPaused(paused_ || startMenu_);
         if (options_.interactionSmoke && !paused_ && audio_->available())
         {
             // Exercise the same transition used by Escape against CNA's real dummy mixer. This
@@ -957,6 +983,12 @@ void TrainSimulatorGame::interact()
 
 }
 
+void TrainSimulatorGame::leaveStartMenu()
+{
+    startMenu_ = false;
+    if (audio_) audio_->setPaused(paused_);
+}
+
 void TrainSimulatorGame::runInteractionSmoke()
 {
     const auto require = [](bool condition, const char* message) {
@@ -1212,6 +1244,27 @@ void TrainSimulatorGame::Update(GameTime& gameTime)
     // become idle. This preserves --frames semantics while avoiding teardown during a load.
     if (finishingAvatarWarmup_)
     {
+        previousKeyboard_ = keyboard;
+        previousMouse_ = mouse;
+        Game::Update(gameTime);
+        return;
+    }
+
+    // The service does not run until the passenger leaves the start menu. The button fires on
+    // release, like a desktop button, so the click that starts the game cannot also capture the
+    // mouse for first-person look on the following frame.
+    if (startMenu_)
+    {
+        const auto& viewport = getGraphicsDeviceProperty().getViewportProperty();
+        const StartButton button = startButton(viewport.getWidthProperty(),
+                                               viewport.getHeightProperty());
+        const bool clicked = getIsActiveProperty()
+            && mouse.getLeftButtonProperty() == ButtonState::Released
+            && previousMouse_.getLeftButtonProperty() == ButtonState::Pressed
+            && button.contains(mouse.getXProperty(),mouse.getYProperty());
+        if (clicked || pressed(keyboard, Keys::Enter) || pressed(keyboard, Keys::Space))
+            leaveStartMenu();
+        if (pressed(keyboard, Keys::F12)) Exit();
         previousKeyboard_ = keyboard;
         previousMouse_ = mouse;
         Game::Update(gameTime);
@@ -1523,6 +1576,58 @@ void TrainSimulatorGame::drawMap()
              Color(160,196,201,255), 1.35f);
     drawText("M  CLOSE MAP", static_cast<float>(x+panelWidth-145), static_cast<float>(y+panelHeight-30),
              Color(160,180,184,255), 1.5f);
+}
+
+void TrainSimulatorGame::drawStartMenu()
+{
+    auto& device = getGraphicsDeviceProperty();
+    const auto& viewport = device.getViewportProperty();
+    const int width = viewport.getWidthProperty();
+    const int height = viewport.getHeightProperty();
+    device.Clear(Color(14,38,50,255));
+    spriteBatch_->Begin();
+
+    // Calm dusk-blue backdrop from the HUD palette, darkening gently toward the bottom edge.
+    constexpr int bands = 48;
+    for (int band = 0; band < bands; ++band)
+    {
+        const float t = static_cast<float>(band) / static_cast<float>(bands-1);
+        const auto channel = [t](int top, int bottom) {
+            return static_cast<int>(std::lround(
+                static_cast<float>(top) + static_cast<float>(bottom-top)*t));
+        };
+        const int top = height*band/bands;
+        const int bottom = height*(band+1)/bands;
+        drawPanel(0,top,width,bottom-top,
+                  Color(channel(36,10),channel(82,30),channel(102,40),255));
+    }
+
+    const std::string title = "NORTHERN VALLEY EXPRESS";
+    constexpr float titleScale = 4.0f;
+    drawText(title,(static_cast<float>(width)-font_->measure(title,titleScale))*0.5f,
+             static_cast<float>(height/2-130),Color(235,243,245,255),titleScale);
+    const std::string subtitle = "PASSENGER TRAIN SIMULATOR";
+    drawText(subtitle,(static_cast<float>(width)-font_->measure(subtitle,2.0f))*0.5f,
+             static_cast<float>(height/2-78),Color(123,213,225,255),2.0f);
+
+    const StartButton button = startButton(width,height);
+    const bool hovered = button.contains(previousMouse_.getXProperty(),
+                                         previousMouse_.getYProperty());
+    drawPanel(button.x-3,button.y-3,button.width+6,button.height+6,Color(7,21,29,230));
+    drawPanel(button.x,button.y,button.width,button.height,
+              hovered ? Color(255,209,96,255) : Color(245,190,49,255));
+    const std::string label = "START";
+    constexpr float labelScale = 3.5f;
+    font_->draw(*spriteBatch_,label,
+                Vector2{(static_cast<float>(width)-font_->measure(label,labelScale))*0.5f,
+                        static_cast<float>(button.y)
+                            + (static_cast<float>(button.height)-7.0f*labelScale)*0.5f},
+                Color(15,26,31,255),labelScale);
+
+    const std::string hint = "ENTER  START     F12  QUIT";
+    drawText(hint,(static_cast<float>(width)-font_->measure(hint,1.45f))*0.5f,
+             static_cast<float>(button.y+button.height+34),Color(188,205,207,255),1.45f);
+    spriteBatch_->End();
 }
 
 void TrainSimulatorGame::drawUi()
@@ -1871,6 +1976,12 @@ void TrainSimulatorGame::Draw(const GameTime& gameTime)
             Game::Draw(gameTime);
             return;
         }
+    }
+    if (startMenu_)
+    {
+        drawStartMenu();
+        Game::Draw(gameTime);
+        return;
     }
     const auto wallNow = std::chrono::steady_clock::now();
     const bool steady = framesDrawn_ >= 180 && scene_->avatarLoadingComplete();
