@@ -129,7 +129,7 @@ RoutePose Route::sample(double distanceMetres) const noexcept
     const bool longTunnel = s > 121'000.0 && s < 126'800.0;
     const bool shortTunnel = s > 229'500.0 && s < 231'100.0;
     const bool riverBridge = s > 73'900.0 && s < 75'100.0;
-    const bool valleyViaduct = s > 177'200.0 && s < 180'000.0;
+    const bool valleyViaduct = s > kValleyViaductBeginMetres && s < kValleyViaductEndMetres;
     // Lakehurst is approached beside a broad upland lake. It is deliberately offset from the
     // railway rather than crossed, making it a long window-view landmark distinct from Redwater.
     const bool lakehurstShore = s > 80'500.0 && s < 87'200.0;

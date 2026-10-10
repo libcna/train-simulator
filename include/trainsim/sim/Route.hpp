@@ -18,6 +18,10 @@ struct Station
     double speedLimitMetresPerSecondFromPrevious = 0.0;
 };
 
+// Authored extent of the dry-valley viaduct. Rendering shapes the crossed valley from it.
+inline constexpr double kValleyViaductBeginMetres = 177'200.0;
+inline constexpr double kValleyViaductEndMetres = 180'000.0;
+
 struct RoutePose
 {
     double x = 0.0;

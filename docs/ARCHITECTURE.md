@@ -24,6 +24,17 @@ Medium/High reed and shrub groups occupy absolute 23 m slots, with roots solved
 against rendered terrain; `river_bank_clumps` exposes this bounded detail. Low
 omits those groups. The same existing vegetation/static batches are reused.
 
+`BridgeGeometry.hpp` holds the shared bridge parapet and the viaduct valley
+profile. Both authored crossings carry a concrete upstand with an overhanging
+coping and drip line, an inboard cable trough and a galvanised two-rail tubular
+handrail on 2.5 m posts; `bridge_parapet_posts` exposes the population. Low
+quality omits the post base plates and trough joints. The dry-valley terrain is
+no longer a fixed depth along the whole span: `viaductValleyTerrain` blends the
+natural approach terrain to a bowl that is deepest near mid-span and closed in
+by lateral spurs, with zero weight at both abutments so the formation stays
+seamless. Viaduct pier shafts thicken with height and gain footings and tie
+beams; piers and parapet remain in the existing static scenery batch.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed

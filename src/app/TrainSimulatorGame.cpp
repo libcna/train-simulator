@@ -679,7 +679,8 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " facade_lighting=" << options_.facadeLightingMode
                   << " facade_shader_draws=" << renderStats_.facadeShaderDraws
                   << " water_shader_draws=" << renderStats_.waterShaderDraws
-                  << " river_bank_clumps=" << renderStats_.riverBankClumps << '\n';
+                  << " river_bank_clumps=" << renderStats_.riverBankClumps
+                  << " bridge_parapet_posts=" << renderStats_.bridgeParapetPosts << '\n';
     }
 }
 

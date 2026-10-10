@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **68 addressed, 55 open**. ENV-001 through ENV-066, ENV-122 and ENV-123 have
+Current disposition: **70 addressed, 53 open**. ENV-001 through ENV-068, ENV-122 and ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -126,8 +126,8 @@ not exist. "Not visible" is limited to the cited view.
 | 064b ENV-123 | ADDRESSED | The far lake bank ends at the streamed terrain edge before fog fully hides it in oblique views. Keep a bounded background surface beyond the fog distance. | lake-bank-stream-edge-discovery |
 | 065 ENV-065 | ADDRESSED | River far bank is a straight cut with fields immediately reaching it. Add bank vegetation and irregularity. | river-bridge |
 | 066 ENV-066 | ADDRESSED | Bright water streaks are long isolated straight lines, conspicuous as graphics. Refine highlights into coherent surface response. | river-bridge |
-| 067 ENV-067 | P2 | Bridge guardrail is a broad flat grey beam dominating the lower window. Refine its profile and material construction. | river-bridge, viaduct |
-| 068 ENV-068 | P2 | Viaduct view lacks convincing valley relief beneath the elevated crossing. Shape the surrounding terrain to support the landmark. | viaduct |
+| 067 ENV-067 | ADDRESSED | Both crossings now have a concrete upstand with coping and drip line, a cable trough and a slender tubular two-rail handrail on posts instead of stacked flat beams. | river-bridge, viaduct |
+| 068 ENV-068 | ADDRESSED | The viaduct crosses a bowl-shaped valley with rising spurs and tall footed, tied piers rather than a uniformly sunken plain. | viaduct |
 | 069 ENV-069 | P2 | Tunnel wall is a near-uniform dark slab without lining joints or material scale. Add restrained lining construction. | tunnel |
 | 070 ENV-070 | P2 | Tunnel lamp appears as a bright rectangle in a large flat patch. Improve fixture depth and light falloff. | tunnel |
 | 071 ENV-071 | P2 | Tunnel service strips/markers are broad unlabelled lines and blocks. Give them recognizable railway utility meaning. | tunnel |
@@ -1745,4 +1745,59 @@ steady mean **25.4 → 25.7 ms**, p95 **25.8 → 26.5 ms**, p99 **25.9 → 27.1 
 maximum **26.0 → 27.5 ms**; initial rebuild **49.9 → 51.9 ms**. These are bounded,
 compositor-paced stationary measurements, not moving-world or 60 FPS evidence.
 Prefix: `river-bank-`. ENV-065 is addressed. Work stopped at the owner's explicit
-request after this item; ENV-067 onward and ENV-121 remain open.
+request after this item and resumed on 2026-10-10 with ENV-067.
+
+### Finished bridge parapets: ENV-067
+
+Both crossings replace the stacked flat edge beams with one shared parapet in
+`BridgeGeometry.hpp`: a concrete upstand, an overhanging coping with a recessed
+drip line, an outer cornice, an inboard cable-trough lid and a galvanised
+two-rail tubular handrail on 2.5 m posts with base plates. Rail ends are capped
+only where a section actually begins or ends a crossing. The river bridge keeps
+its darker steel fascia below the upstand. Low quality omits base plates and
+trough joints; `bridge_parapet_posts` exposes the population. An initial 2 m post
+cadence cost 1,550 posts and a 47 ms larger initial rebuild on the viaduct and
+was rejected before acceptance.
+
+Inspected matched [river left-window before](../build/visual-audit/bridge-parapet-river-left-before.png) /
+[after](../build/visual-audit/bridge-parapet-river-left-after.png), the seated
+downward view, river oblique, [viaduct downward before](../build/visual-audit/bridge-parapet-viaduct-down-before.png) /
+[after](../build/visual-audit/bridge-parapet-viaduct-down-after.png) and the viaduct
+oblique. The lower window now shows a thin rail silhouette above a finished
+coping instead of two grey bars. Three new unit tests cover the valley profile,
+tube normals/caps and the parapet envelope at both deck edges. 600-frame viaduct
+sample: **95 draws unchanged**, **1,223,684 → 1,259,312** triangles, **1,240
+posts** (viaduct window run); steady mean **25.4 → 25.4 ms**, p95 **26.0 →
+25.7 ms**, p99 **26.2 → 26.0 ms**, maximum **26.3 → 26.9 ms**; initial rebuild
+**127.4 → 145.6 ms**. Prefix: `bridge-parapet-`. ENV-067 is addressed.
+
+### Bowl-shaped viaduct valley and footed piers: ENV-068
+
+The dry crossing previously lowered the terrain to one fixed depth along the
+whole 2.8 km span, so from the window the viaduct ran over a sunken plain and
+an exterior view showed a floating field edge beside the abutment. The valley
+profile now lives in `BridgeGeometry.hpp` and is used by the single terrain
+height function: natural approach terrain blends, with zero weight at both
+abutments, into a bowl deepest near mid-span, closed in by side spurs whose
+phases differ per valley side. Viaduct pier shafts thicken with height, stand
+on footings, and tall piers gain tie beams, so they read as structure rather
+than two thin posts. The streamed chunk count, scenery clearance and feature
+reservation are unchanged.
+
+Inspected matched [valley floor before](../build/visual-audit/viaduct-valley-valley-floor-before.png) /
+[after](../build/visual-audit/viaduct-valley-valley-floor-after.png),
+[along-track before](../build/visual-audit/viaduct-valley-valley-along-before.png) /
+[after](../build/visual-audit/viaduct-valley-valley-along-after.png),
+[underside before](../build/visual-audit/viaduct-valley-valley-underside-before.png) /
+[after](../build/visual-audit/viaduct-valley-valley-underside-after.png), both
+abutments and the diagonal view. The old underside view exposed sky under a
+floating ground plate; the new one is grounded. From the passenger window the
+far ground now rises toward the horizon on both sides. Note that the valley
+captures were taken with the same before binary as the parapet set, so their
+before images already lack the parapet change only in the sense that neither
+repair was present. 600-frame viaduct sample (both repairs): steady mean
+**25.3 ms**, p95 **25.6 ms**, p99 **26.0 ms**, maximum **26.2 ms**, initial
+rebuild **139.5 ms**; triangle and draw counts match the parapet run. These are
+compositor-paced stationary measurements, not moving-world evidence. Whole
+suite after the final build: **67/67, 105.79 s**. Prefix:
+`viaduct-valley-`. ENV-068 is addressed; ENV-069 onward and ENV-121 remain open.

@@ -1,6 +1,7 @@
 #include "trainsim/render/SceneRenderer.hpp"
 
 #include "trainsim/render/AvatarMotion.hpp"
+#include "trainsim/render/BridgeGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -232,14 +233,6 @@ float terrainOffset(const Sim::RoutePose& pose, double distance, double lateral)
         const double distantRelief = 2.2 * std::sin(distance / 1'350.0 + lateral / 210.0);
         return static_cast<float>(-11.0 + easedShore * (14.0 + distantRelief));
     }
-    if (pose.bridge)
-    {
-        // The second authored crossing is a dry valley viaduct. Its centre stays well below rail
-        // level while the terrain climbs toward wooded hills on either side.
-        const double valleyRelief = 5.0 * std::sin(distance / 1'700.0 + lateral / 190.0)
-                                  + 2.5 * std::sin(lateral / 73.0);
-        return static_cast<float>(-15.0 + corridorBlend * (11.0 + valleyRelief));
-    }
     const double relief = 7.0
                         + 8.5 * std::sin(distance / 1'900.0 + lateral / 83.0)
                         + 5.0 * std::sin(distance / 720.0 - lateral / 145.0);
@@ -279,7 +272,8 @@ float terrainOffset(const Sim::RoutePose& pose, double distance, double lateral)
             lakeShoreCoordinate(distance,waterwardLateral),
             pose.adjacentWaterSurfaceElevation-pose.elevation));
     }
-    return static_cast<float>(naturalTerrain);
+    // The second authored crossing is a dry viaduct over a valley running across the line.
+    return static_cast<float>(viaductValleyTerrain(distance,lateral,naturalTerrain));
 }
 
 Color roadVehicleColor(std::uint32_t variant)
@@ -1386,6 +1380,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
     staticWorldRiverBridgeSections_ = 0;
     staticWorldViaductSections_ = 0;
     staticWorldBridgeAbutments_ = 0;
+    staticWorldBridgeParapetPosts_ = 0;
     staticWorldPlatformSurfaceJoints_ = 0;
     staticWorldPlatformCanopyLights_ = 0;
     staticWorldPlatformCanopyDrainageAssemblies_ = 0;
@@ -2359,10 +2354,6 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             const float bridgeLength = static_cast<float>(bridgeEnd-bridgeBegin)+0.3f;
             const Color deckColor = bridgePose.waterCrossing
                 ? Color(82,91,94,255) : Color(112,113,107,255);
-            const Color edgeColor = bridgePose.waterCrossing
-                ? Color(67,82,88,255) : Color(130,130,120,255);
-            const Color railColor = bridgePose.waterCrossing
-                ? Color(126,139,142,255) : Color(147,148,139,255);
             const LocalRoutePoint deck = localRoutePoint(
                 route,anchorDistance,bridgeMiddle,-2.5);
             addOrientedBox(mesh,deck.x,deck.y-0.34f,deck.z,
@@ -2390,37 +2381,31 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                                         : Color(96,97,92,255));
             }
 
-            for (double lateral : {-8.0, 3.0})
-            {
-                const LocalRoutePoint rail = localRoutePoint(
-                    route,anchorDistance,bridgeMiddle,lateral);
-                addOrientedBox(mesh,rail.x,rail.y+0.16f,rail.z,
-                               bridgePose.waterCrossing ? 0.24f : 0.32f,
-                               bridgePose.waterCrossing ? 0.32f : 0.56f,
-                               bridgeLength,rail.yaw,edgeColor);
-                if (bridgePose.waterCrossing)
-                    addOrientedBox(mesh,rail.x,rail.y-0.46f,rail.z,
-                                   0.36f,0.76f,bridgeLength,rail.yaw,
-                                   Color(53,72,80,255));
-                addOrientedBox(mesh,rail.x,rail.y+0.72f,rail.z,
-                               0.11f,0.10f,bridgeLength,rail.yaw,railColor);
-                addOrientedBox(mesh,rail.x,rail.y+1.24f,rail.z,
-                               0.14f,0.13f,bridgeLength,rail.yaw,railColor);
-                const double firstPost = std::ceil(bridgeBegin / 6.0) * 6.0;
-                for (double postDistance = firstPost; postDistance < bridgeEnd;
-                     postDistance += 6.0)
-                {
-                    const LocalRoutePoint post = localRoutePoint(
-                        route, anchorDistance, postDistance, lateral);
-                    addOrientedBox(mesh,post.x,post.y+0.64f,post.z,
-                                   0.15f,1.28f,0.15f,post.yaw,railColor);
-                }
-            }
-
             const bool beginsCrossing = !route.sample(
                 std::max(0.0,bridgeBegin-0.1)).bridge;
             const bool endsCrossing = !route.sample(
                 std::min(route.lengthMetres(),bridgeEnd+0.1)).bridge;
+            // Both deck edges carry a finished parapet: concrete upstand and coping, cable
+            // trough and a slender tubular handrail instead of broad rectangular beams.
+            const BridgeParapetStyle parapetStyle = bridgeParapetStyle(bridgePose.waterCrossing);
+            const auto parapetPoint = [&](double distance,double lateral) {
+                return localRoutePoint(route,anchorDistance,distance,lateral);
+            };
+            for (const auto [lateral,outward] : {std::pair{-8.0,-1.0f},std::pair{3.0,1.0f}})
+            {
+                staticWorldBridgeParapetPosts_ += addBridgeParapet(
+                    mesh,parapetPoint,bridgeBegin,bridgeEnd,lateral,outward,
+                    beginsCrossing,endsCrossing,parapetStyle,graphicsQuality_>0);
+                if (bridgePose.waterCrossing)
+                {
+                    const LocalRoutePoint fascia = localRoutePoint(
+                        route,anchorDistance,bridgeMiddle,lateral+outward*0.06);
+                    addOrientedBox(mesh,fascia.x,fascia.y-0.58f,fascia.z,
+                                   0.30f,0.64f,bridgeLength,fascia.yaw,
+                                   Color(53,72,80,255));
+                }
+            }
+
             if (beginsCrossing || endsCrossing)
             {
                 ++staticWorldBridgeAbutments_;
@@ -2472,13 +2457,34 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             }
             else
             {
+                // Paired shafts thicken with height, stand on their own footing and are tied
+                // together at intervals, so tall valley piers read as load-bearing structure.
+                const float shaftWidth = std::clamp(1.15f+0.035f*pierHeight,1.15f,2.4f);
                 for (double lateral : {-5.25, 0.25})
                 {
+                    const float shaftGround = std::min(
+                        groundOffset,terrainOffset(pierPose,pierDistance,lateral))-0.6f;
+                    const float shaftHeight = kPierTop-shaftGround;
                     const LocalRoutePoint pier = localRoutePoint(
                         route,anchorDistance,pierDistance,lateral);
-                    addOrientedBox(mesh,pier.x,pier.y+groundOffset+pierHeight*0.5f,pier.z,
-                                   1.15f,pierHeight,1.15f,pier.yaw,
+                    addOrientedBox(mesh,pier.x,pier.y+shaftGround+shaftHeight*0.5f,pier.z,
+                                   shaftWidth,shaftHeight,shaftWidth,pier.yaw,
                                    Color(118,118,110,255));
+                    if (pierHeight > 4.0f)
+                        addOrientedBox(mesh,pier.x,pier.y+shaftGround+0.85f,pier.z,
+                                       shaftWidth+1.1f,0.9f,shaftWidth+1.1f,pier.yaw,
+                                       Color(106,105,98,255));
+                }
+                const int ties = static_cast<int>(pierHeight/13.0f);
+                for (int tie = 1; tie <= ties; ++tie)
+                {
+                    const float height = pierHeight*static_cast<float>(tie)
+                                       / static_cast<float>(ties+1);
+                    const LocalRoutePoint beam = localRoutePoint(
+                        route,anchorDistance,pierDistance,-2.5);
+                    addOrientedBox(mesh,beam.x,beam.y+groundOffset+height,beam.z,
+                                   5.5f,0.95f,shaftWidth*0.8f,beam.yaw,
+                                   Color(112,112,104,255));
                 }
             }
         }
@@ -8616,6 +8622,7 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     stats.riverBridgeSections = staticWorldRiverBridgeSections_;
     stats.viaductSections = staticWorldViaductSections_;
     stats.bridgeAbutments = staticWorldBridgeAbutments_;
+    stats.bridgeParapetPosts = staticWorldBridgeParapetPosts_;
     stats.platformSurfaceJoints = staticWorldPlatformSurfaceJoints_;
     stats.platformCanopyLights = staticWorldPlatformCanopyLights_;
     stats.platformCanopyDrainageAssemblies =

@@ -10,6 +10,7 @@
 #include "trainsim/render/ForecourtGeometry.hpp"
 #include "trainsim/render/WaterSurface.hpp"
 #include "trainsim/render/ShoreGeometry.hpp"
+#include "trainsim/render/BridgeGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3263,5 +3264,108 @@ TEST_CASE("smooth ellipsoid normals follow the surface gradient without recolour
         REQUIRE((vertex.normal-expected).LengthSquared() < 1e-8f);
         REQUIRE(std::abs(vertex.normal.LengthSquared()-1.0f) < 1e-5f);
         REQUIRE(vertex.color == colour.getPackedValueProperty());
+    }
+}
+
+TEST_CASE("viaduct valley falls from seamless abutments to a deep crossing floor")
+{
+    using namespace TrainSim::Render;
+    const double begin = TrainSim::Sim::kValleyViaductBeginMetres;
+    const double end = TrainSim::Sim::kValleyViaductEndMetres;
+    const double middle = (begin+end)*0.5;
+    for (double lateral : {-1'200.0,-260.0,-12.0,-2.5,0.0,3.0,40.0,600.0,1'200.0})
+    {
+        // Outside and exactly at both abutments the natural approach terrain is unchanged.
+        for (double distance : {begin-500.0,begin,end,end+500.0})
+            REQUIRE(viaductValleyTerrain(distance,lateral,4.25) == 4.25);
+        // Close to the abutment the change is small and continuous.
+        REQUIRE(std::abs(viaductValleyTerrain(begin+1.0,lateral,-0.34)+0.34) < 0.3);
+        REQUIRE(std::abs(viaductValleyTerrain(end-1.0,lateral,-0.34)+0.34) < 0.3);
+        // The valley runs across the railway: its floor is deep at every lateral offset.
+        REQUIRE(viaductValleyTerrain(middle,lateral,30.0) < -28.0);
+        REQUIRE(viaductValleyTerrain(middle,lateral,30.0) > -44.0);
+        // A broad bowl rather than a flat plain: the floor keeps falling toward mid-span.
+        REQUIRE(viaductValleyFloor(begin+700.0,lateral) > viaductValleyFloor(middle,lateral)+3.0);
+        double previous = -1.0;
+        for (double inside = 0.0; inside <= 700.0; inside += 10.0)
+        {
+            const double weight = viaductValleyWeight(begin+inside,lateral);
+            REQUIRE(weight >= previous);
+            REQUIRE(weight >= 0.0);
+            REQUIRE(weight <= 1.0);
+            previous = weight;
+            REQUIRE(std::abs(weight-viaductValleyWeight(end-inside,lateral)) < 0.35);
+        }
+        REQUIRE(previous == 1.0);
+    }
+}
+
+TEST_CASE("bridge handrail tubes are slender with outward faces and closed ends")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder builder;
+    addBridgeRail(builder,0.5f,1.2f,10.0f,0.0f,kBridgeHandrailRadius,20.0f,8,true,true,
+                  Color(150,155,152,255));
+    const auto mesh = builder.take();
+    REQUIRE(mesh.indices.size() == 8U*(6U+3U+3U));
+    bool beginCap = false;
+    bool endCap = false;
+    for (const auto& vertex : mesh.vertices)
+    {
+        const Vector3 radial{vertex.position.X-0.5f,vertex.position.Y-1.2f,0.0f};
+        REQUIRE(radial.Length() <= kBridgeHandrailRadius+1.0e-5f);
+        REQUIRE(std::abs(vertex.normal.LengthSquared()-1.0f) < 1.0e-4f);
+        if (std::abs(vertex.normal.Z) > 0.999f)
+        {
+            beginCap = beginCap || (vertex.normal.Z < 0.0f && vertex.position.Z < 0.01f);
+            endCap = endCap || (vertex.normal.Z > 0.0f && vertex.position.Z > 19.99f);
+        }
+        else if (radial.Length() > 0.01f)
+            REQUIRE(vertex.normal.X*radial.X+vertex.normal.Y*radial.Y > 0.0f);
+    }
+    REQUIRE(beginCap);
+    REQUIRE(endCap);
+}
+
+TEST_CASE("bridge parapet replaces broad beams with a bounded post and rail assembly")
+{
+    using namespace TrainSim::Render;
+    struct Point { float x,y,z,yaw; };
+    const auto point = [](double distance,double lateral) {
+        return Point{static_cast<float>(lateral),0.0f,static_cast<float>(distance),0.0f};
+    };
+    for (const float outward : {-1.0f,1.0f})
+    {
+        const double lateral = outward > 0.0f ? 3.0 : -8.0;
+        MeshBuilder builder;
+        const int posts = addBridgeParapet(builder,point,40.0,60.0,lateral,outward,false,false,
+                                           bridgeParapetStyle(false));
+        REQUIRE(posts == 8);
+        MeshBuilder lowBuilder;
+        REQUIRE(addBridgeParapet(lowBuilder,point,40.0,60.0,lateral,outward,false,false,
+                                 bridgeParapetStyle(false),false) == 8);
+        const auto mesh = builder.take();
+        REQUIRE(!mesh.empty());
+        REQUIRE(mesh.indices.size()/3U < 400U);
+        REQUIRE(lowBuilder.take().indices.size() < mesh.indices.size());
+        const float railCentre = static_cast<float>(lateral)-0.02f*outward;
+        float highest = -1.0f;
+        for (const auto& vertex : mesh.vertices)
+        {
+            const float across = (vertex.position.X-static_cast<float>(lateral))*outward;
+            REQUIRE(across >= -0.84f);
+            REQUIRE(across <= 0.27f);
+            REQUIRE(vertex.position.Y >= -0.64f);
+            REQUIRE(vertex.position.Z >= 39.93f);
+            REQUIRE(vertex.position.Z <= 60.07f);
+            highest = std::max(highest,vertex.position.Y);
+            // Everything above the coping is slender steel: posts and two round rails.
+            if (vertex.position.Y > kBridgeParapetTop+0.03f)
+                REQUIRE(std::abs(vertex.position.X-railCentre)
+                        <= std::max(kBridgePostWidth*0.5f,kBridgeHandrailRadius)+1.0e-4f);
+            if (vertex.position.Y > kBridgeHandrailHeight-kBridgeHandrailRadius-1.0e-4f)
+                REQUIRE(std::abs(vertex.position.X-railCentre) <= kBridgeHandrailRadius+1.0e-4f);
+        }
+        REQUIRE(std::abs(highest-(kBridgeHandrailHeight+kBridgeHandrailRadius)) < 1.0e-3f);
     }
 }

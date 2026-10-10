@@ -1,13 +1,13 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-09. Repository: `libcna/train-simulator`, branch `main`.
+Updated: 2026-10-10. Repository: `libcna/train-simulator`, branch `main`.
 
 ## Owner instruction at handoff
 
-The owner explicitly asked to finish the current river-bank repair, write this
-English handoff, commit, push, report status, and then stop. Do not interpret this
-document as authorization to keep working after that stop. Resume the remaining
-campaign only when the owner requests it. The owner manages the application goal;
+On 2026-10-09 the owner asked to finish the river-bank repair, write this
+English handoff, commit, push and stop. On 2026-10-10 the owner asked to resume
+from this document and continue the visual work; ENV-067 and ENV-068 were
+repaired in that session. Treat each session's instruction as its own scope. The owner manages the application goal;
 do not block implementation on the goal service or create/change goals implicitly.
 
 ## What this project is
@@ -133,8 +133,16 @@ they do not establish movement, physical mouse input or audio correctness.
 - `SceneRenderer.cpp` remains large. Keep new reusable geometry in focused headers
   rather than expanding unrelated systems or moving rendering into simulation.
 
+- `BridgeGeometry.hpp`: shared bridge parapet (upstand, coping, drip line, cable
+  trough, tubular two-rail handrail on 2.5 m posts; Low omits base plates) and
+  the viaduct valley profile (`viaductValleyTerrain`: bowl deepest at mid-span,
+  side spurs, zero weight at both abutments). `Route.hpp` exports the viaduct
+  extent constants. Viaduct piers thicken with height, gain footings and ties.
+  `bridge_parapet_posts` is reported; `tools/capture_bridge_detail.sh` captures
+  both crossings (extra valley/abutment views under the `viaduct-valley` prefix).
+
 Latest evidence prefixes: `terminal-forecourt-`, `water-surface-`, `lake-bank-`,
-and `river-bank-`. The terminal's comparable before benchmark is specifically
+`river-bank-`, `bridge-parapet-` and `viaduct-valley-`. The terminal's comparable before benchmark is specifically
 `terminal-forecourt-terminal-performance-before.log`; the earlier similarly
 named baseline measured Stonebridge and is not comparable. The lake's
 `far-bank-before` camera lay below the old coarse terrain and was excluded from
@@ -142,9 +150,9 @@ acceptance; use the valid near-bank, passenger and oblique pairs.
 
 ## Remaining risks and next work after a new owner request
 
-1. Continue the ranked visual audit with bridge guardrail ENV-067, valley relief
-   ENV-068, tunnels, track/signals/catenary, close interior fittings and exterior
-   train shell/equipment. ENV-121 remains open. ENV-120 is the broader terminal
+1. Continue the ranked visual audit with tunnel lining/lamps/markers ENV-069 to
+   ENV-071, track/ballast/signals/catenary ENV-072 to ENV-080, close interior
+   fittings and exterior train shell/equipment. ENV-121 remains open. ENV-120 is the broader terminal
    composition, not closed merely by the forecourt repair.
 2. The owner reported an intermittent physical-mouse camera freeze. It remains
    unresolved/not reproduced by the latest visual work. Automated interaction
@@ -163,22 +171,26 @@ Do not infer that the entire campaign is done from a clean Git tree.
 
 ## Final verification and disposition
 
-- **68 addressed / 55 open / 123 total findings.** ENV-001 through ENV-066,
-  ENV-122 and ENV-123 have evidence; ENV-067 through ENV-120 and ENV-121 remain.
+- **70 addressed / 53 open / 123 total findings.** ENV-001 through ENV-068,
+  ENV-122 and ENV-123 have evidence; ENV-069 through ENV-120 and ENV-121 remain.
 - Final incremental build succeeded with shared system ccache and four workers.
-- Final whole CTest suite: **67/67 passed, 102.90 s**,
-  `build/visual-audit/river-bank-full-tests.log`.
-- Final actual GPU screenshots inspected: both river-bank oblique views and
-  passenger view, matched against preserved before images. Prefix `river-bank-`.
-- 600-frame river sample: **95 draws unchanged**, **940,240 → 948,040 triangles**,
-  **98 bank clumps**. Steady mean **25.4 → 25.7 ms**, p95 **25.8 → 26.5 ms**,
-  p99 **25.9 → 27.1 ms**, maximum **26.0 → 27.5 ms**. Initial rebuild
-  **49.9 → 51.9 ms**. This does not replace a moving or long physical-input test.
+  During the session the sibling `sharp-runtime` checkout was briefly being
+  edited by someone else and failed to compile; it recovered on its own and was
+  not touched from this project.
+- Final whole CTest suite on the final binary: **67/67 passed, 105.79 s**,
+  `build/visual-audit/bridge-parapet-full-tests.log` (an earlier 67/67, 131.26 s
+  run preceded the final post-spacing change; render unit tests 156/156 after it).
+- Final actual GPU screenshots inspected: river/viaduct window, downward,
+  oblique, valley floor, along-track, underside and both abutments, matched
+  against preserved before images. Prefixes `bridge-parapet-`, `viaduct-valley-`.
+- 600-frame viaduct sample: **95 draws unchanged**, **1,223,684 → 1,259,312
+  triangles**, **1,240 parapet posts**. Steady mean **25.4 → 25.4 ms**, p95
+  **26.0 → 25.7 ms**, p99 **26.2 → 26.0 ms**, maximum **26.3 → 26.9 ms**. Initial
+  rebuild **127.4 → 145.6 ms** (synchronous generation cost, still open). This
+  does not replace a moving or long physical-input test.
 - CNA and sharp-runtime working trees remained clean. No dependency modifications.
-- No earlier local commits or remote branches existed at handoff preparation;
-  the requested commit is the initial project snapshot, not just the last diff.
-  Runtime source assets and earlier README screenshots are included; ignored
-  build products, runtime configs, logs and audit captures are excluded.
-- The commit containing this handoff is intended for `origin/main`. Verify the
-  actual pushed commit with `git log -1` and `git status -sb`; do not assume push
-  success from the document alone. Final chat status reports the confirmed result.
+- The repository history starts with the 2026-10-09 initial snapshot; later
+  commits are ordinary diffs. Ignored build products, runtime configs, logs and
+  audit captures are excluded from every commit.
+- Verify what is actually on `origin/main` with `git log -1` and
+  `git status -sb`; do not assume push state from this document.
