@@ -6,6 +6,7 @@
 #include "trainsim/render/TrackGeometry.hpp"
 #include "trainsim/render/LinesideGeometry.hpp"
 #include "trainsim/render/SignalGeometry.hpp"
+#include "trainsim/render/InteriorFittingsGeometry.hpp"
 #include "trainsim/render/AvatarAppearance.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
 #include "trainsim/render/PlatformLayout.hpp"
@@ -6438,12 +6439,8 @@ void SceneRenderer::buildInterior()
                 const Color& caseColor = rackLuggageColors[
                     (static_cast<std::size_t>(car)*2U + static_cast<std::size_t>(bag)
                      + (side > 0.0f ? 1U : 0U)) % rackLuggageColors.size()];
-                mesh.addBox(Vector3{xmin,2.23f,z-halfLength},
-                            Vector3{xmax,2.46f+0.05f*static_cast<float>(bag),z+halfLength},
-                            caseColor);
-                mesh.addBox(Vector3{(xmin+xmax)*0.5f-0.055f,2.45f,z-0.12f},
-                            Vector3{(xmin+xmax)*0.5f+0.055f,2.54f,z+0.12f},
-                            Color(50,54,54,255));
+                addRackSuitcase(mesh,xmin,xmax,z,halfLength,
+                                2.46f+0.05f*static_cast<float>(bag),caseColor,bag%2==0);
                 ++overheadLuggageItemCount_;
             }
         }
@@ -6509,9 +6506,7 @@ void SceneRenderer::buildInterior()
             addVestibuleServicePanels(interiorPanelMaterial,side,fixtureZ+0.020f,-1);
             for (float x : {x0+0.075f,x1-0.075f})
                 for (float y : {0.29f,2.17f})
-                    mesh.addBox(Vector3{x-0.015f,y-0.015f,fixtureZ-0.002f},
-                                Vector3{x+0.015f,y+0.015f,fixtureZ+0.013f},
-                                Color(177,180,172,255));
+                    addSeatedPanelFastener(mesh,x,y,fixtureZ-0.002f,1.0f);
         }
         mesh.addBox(Vector3{-0.650f,0.10f,fixtureZ-0.004f},
                     Vector3{-0.608f,2.38f,fixtureZ+0.014f},vestibuleSeal);
@@ -6522,6 +6517,7 @@ void SceneRenderer::buildInterior()
         ++vestibulePortalDetailGroupCount_;
         mesh.addBox(Vector3{0.78f,0.13f,safetyWallZ-0.035f},
                     Vector3{1.22f,0.94f,safetyWallZ},Color(72,79,80,255));
+        addExtinguisherFittings(mesh,1.0f,fixtureZ,safetyWallZ);
         mesh.addCylinder(Vector3{1.0f,0.25f,fixtureZ},0.082f,0.46f,12,
                          Color(202,48,40,255));
         mesh.addCone(Vector3{1.0f,0.71f,fixtureZ},0.070f,0.10f,12,
@@ -6533,18 +6529,11 @@ void SceneRenderer::buildInterior()
         mesh.addBox(Vector3{0.96f,0.44f,fixtureZ-0.086f},
                     Vector3{1.04f,0.55f,fixtureZ-0.078f},Color(245,221,184,255));
 
-        mesh.addBox(Vector3{-1.23f,1.05f,safetyWallZ-0.075f},
-                    Vector3{-0.77f,1.78f,safetyWallZ-0.020f},Color(31,49,57,255));
-        mesh.addBox(Vector3{-1.15f,1.14f,safetyWallZ-0.086f},
-                    Vector3{-0.85f,1.65f,safetyWallZ-0.074f},Color(204,213,210,255));
-        for (float speakerX : {-0.075f,-0.025f,0.025f,0.075f})
-            mesh.addBox(Vector3{-1.0f+speakerX-0.014f,1.51f,safetyWallZ-0.094f},
-                        Vector3{-1.0f+speakerX+0.014f,1.56f,safetyWallZ-0.084f},
-                        Color(55,67,70,255));
-        mesh.addBox(Vector3{-1.06f,1.23f,safetyWallZ-0.095f},
-                    Vector3{-0.94f,1.36f,safetyWallZ-0.083f},Color(199,48,42,255));
-        mesh.addBox(Vector3{-1.045f,1.67f,safetyWallZ-0.096f},
-                    Vector3{-0.955f,1.73f,safetyWallZ-0.082f},Color(81,206,119,255));
+        addEmergencyIntercom(mesh,-1.0f,safetyWallZ);
+        addDisplayText(mesh,"EMERGENCY",1.447f,safetyWallZ-0.0925f,false,
+                       Color(214,224,222,255),-1.0f,0.24f);
+        addDisplayText(mesh,"PRESS AND SPEAK",1.199f,safetyWallZ-0.0925f,false,
+                       Color(214,224,222,255),-1.0f,0.24f);
 
         for (float side : {-1.0f,1.0f})
         {
@@ -6622,16 +6611,8 @@ void SceneRenderer::buildInterior()
                     // cushion collision, but reads as modern railway furniture from the aisle.
                     const float pedestalZ = z+(forward ? 0.10f : -0.10f);
                     addSoftContactShadow(interiorShadows,seatX,0.1048f,pedestalZ,0.16f,0.16f,105);
-                    mesh.addCylinder(Vector3{seatX,0.08f,pedestalZ},
-                                     0.115f,0.035f,10,seatFrame);
-                    for (float boltZ : {-0.063f,0.063f})
-                    {
-                        mesh.addCylinder(Vector3{seatX,0.115f,pedestalZ+boltZ},
-                                         0.014f,0.010f,6,Color(44,49,49,255));
-                        ++seatMountFastenerCount_;
-                    }
-                    mesh.addCylinder(Vector3{seatX,0.105f,pedestalZ},
-                                     0.045f,0.315f,8,seatFrame);
+                    addSeatPedestal(mesh,seatX,pedestalZ,seatFrame);
+                    seatMountFastenerCount_ += 2;
                     mesh.addRoundedBoxXZ(Vector3{seatX-0.18f,0.39f,z-0.21f},
                                          Vector3{seatX+0.18f,0.44f,z+0.21f},
                                          0.035f,2,seatFrame);
@@ -6879,14 +6860,7 @@ void SceneRenderer::buildInterior()
         // A slightly crowned metal bridge closes the half-metre structural gap between the two
         // floor slabs. Its inset dark strips stay below the collision plane and provide speed-
         // independent visual footing through the doorway.
-        mesh.addBox(Vector3{-0.55f,0.080f,z-0.34f},
-                    Vector3{0.55f,0.096f,z+0.34f},Color(104,109,107,255));
-        for (float offset : {-0.22f,-0.11f,0.0f,0.11f,0.22f})
-            mesh.addBox(Vector3{-0.49f,0.096f,z+offset-0.012f},
-                        Vector3{0.49f,0.101f,z+offset+0.012f},Color(48,55,57,255));
-        for (float x : {-0.53f,0.53f})
-            mesh.addBox(Vector3{x-0.018f,0.096f,z-0.31f},
-                        Vector3{x+0.018f,0.104f,z+0.31f},Color(225,181,45,255));
+        addGangwayBridgePlate(mesh,z);
         ++nonCarpetedFloorZoneCount_;
 
         // Full-height grab rails have visible wall mounts. A warm header lamp and an illuminated
@@ -6894,6 +6868,7 @@ void SceneRenderer::buildInterior()
         for (float x : {-0.46f,0.46f})
         {
             mesh.addCylinder(Vector3{x,0.12f,z},0.025f,2.13f,8,brushedMetal);
+            addGrabRailEnds(mesh,x,z,0.12f,2.25f,0.025f,brushedMetal);
             for (float y : {0.31f,2.03f})
             {
                 const float x0 = x < 0.0f ? x-0.12f : x;
@@ -6926,14 +6901,17 @@ void SceneRenderer::buildInterior()
                     Vector3{-0.54f,3.0f,z+0.10f}, Color(56,69,76,255));
         mesh.addBox(Vector3{0.54f,0.0f,z-0.10f},
                     Vector3{1.48f,3.0f,z+0.10f}, Color(56,69,76,255));
-        mesh.addBox(Vector3{-0.54f,0.0f,z-0.10f},
-                    Vector3{0.54f,1.22f,z+0.10f}, Color(62,77,84,255));
-        mesh.addBox(Vector3{-0.54f,2.42f,z-0.10f},
-                    Vector3{0.54f,3.0f,z+0.10f}, Color(56,69,76,255));
-        glass.addBox(Vector3{-0.48f,1.26f,z-0.115f},
-                     Vector3{0.48f,2.38f,z+0.115f}, Color(86,143,161,42));
-        mesh.addBox(Vector3{0.39f,0.34f,z-0.135f},
-                    Vector3{0.45f,0.68f,z+0.135f}, Color(222,186,53,255));
+        // The leaf sits 15 mm behind the bulkhead face inside a proud frame; hinges, kick
+        // plate and lever hardware come from InteriorFittingsGeometry.hpp.
+        mesh.addBox(Vector3{-0.54f,0.0f,z-0.085f},
+                    Vector3{0.54f,1.22f,z+0.085f}, Color(62,77,84,255));
+        mesh.addBox(Vector3{-0.54f,2.38f,z-0.085f},
+                    Vector3{0.54f,2.42f,z+0.085f}, Color(62,77,84,255));
+        mesh.addBox(Vector3{-0.60f,2.42f,z-0.10f},
+                    Vector3{0.60f,3.0f,z+0.10f}, Color(56,69,76,255));
+        glass.addBox(Vector3{-0.48f,1.26f,z-0.10f},
+                     Vector3{0.48f,2.38f,z+0.10f}, Color(86,143,161,42));
+        addCabDoorHardware(mesh,z,z < 0.0f ? 1.0f : -1.0f);
         mesh.addBox(Vector3{-0.62f,0.72f,z-0.12f},
                     Vector3{0.62f,1.12f,z+0.12f}, Color(205,59,45,255));
         const bool mirrored = z > 0.0f;

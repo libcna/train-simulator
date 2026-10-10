@@ -56,6 +56,13 @@ struts, plus the boundary fence with absolute post cadence and strained end
 posts. `SignalGeometry.hpp` builds the colour-light signal; its lens centres are
 shared with the live aspect overlay in `SceneRenderer`.
 
+`InteriorFittingsGeometry.hpp` holds close-inspection passenger fittings in the
+shared interior batch: seat pedestals, rack suitcases, cab-door hardware,
+extinguisher fittings, the emergency intercom, seated panel fasteners, the
+gangway bridge plate and grab-rail end caps. Seat grip recess and literature
+pocket construction stay in `addSeatRearShell`, bounded by the existing rear
+envelope and triangle budget tests.
+
 ## Station detail geometry and clearance
 
 `StationGeometry.hpp` contains bounded canopy frames, panel soffits and sealed

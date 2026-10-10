@@ -698,13 +698,43 @@ inline void addSeatRearShell(MeshBuilder& mesh, float x, float rearZ, float dire
         if (direction>0) mesh.addQuad(a,b,c,d,shell);
         else mesh.addQuad(d,c,b,a,shell);
     }
-    // Layered recess and pocket mouth remain inside the existing seat footprint.
-    panel(0.117f,1.328f,1.442f,0.0125f,0.018f,0.031f,Color(86,101,107,255));
-    panel(0.105f,1.34f,1.43f,0.0185f,0.019f,0.025f,Color(16,27,34,255));
-    panel(0.081f,1.343f,1.352f,0.0195f,0.025f,0.004f,Color(105,116,118,255));
-    panel(0.160f,0.80f,1.08f,0.013f,0.030f,0.022f,Color(67,84,91,255));
-    panel(0.142f,1.035f,1.066f,0.0305f,0.032f,0.010f,Color(23,34,39,255));
-    panel(0.158f,1.021f,1.038f,0.030f,0.035f,0.007f,Color(132,143,143,255));
+    // Grab recess: the dark cavity floor sits on the shell and a proud polymer rim with an
+    // inner bevel surrounds it, shadowed along its upper edge and lit along the lower one so
+    // the hand hollow reads as recessed rather than as a black patch. Strips are plain boxes
+    // to keep the per-seat shell inside its triangle budget.
+    const Color rim(96,110,116,255),rimLit(126,140,144,255),cavity(16,27,34,255);
+    const auto depth=[&](float d) { return rearZ+direction*d; };
+    const auto strip=[&](float x0,float x1,float y0,float y1,float near,float far,const Color& c) {
+        mesh.addBox({x0,y0,std::min(depth(near),depth(far))},{x1,y1,std::max(depth(near),depth(far))},c);
+    };
+    panel(0.112f,1.335f,1.437f,0.0125f,0.0135f,0.028f,cavity);
+    strip(x-0.125f,x+0.125f,1.436f,1.452f,0.0125f,0.024f,rim);
+    strip(x-0.125f,x+0.125f,1.320f,1.336f,0.0125f,0.024f,rimLit);
+    for (float edge : {x-0.1175f,x+0.1175f})
+        strip(edge-0.0075f,edge+0.0075f,1.320f,1.452f,0.0125f,0.024f,rim);
+    strip(x-0.108f,x+0.108f,1.422f,1.434f,0.0135f,0.0145f,Color(7,13,17,255));
+    strip(x-0.108f,x+0.108f,1.338f,1.346f,0.0135f,0.0145f,Color(44,60,68,255));
+    // Literature pocket: flush fabric back, elastic front that leans open toward the mouth,
+    // side gussets, a stitched mouth band and a leaflet standing in it. The mouth stays within
+    // the shell's 55 mm rear envelope.
+    const Color pocketBack(52,66,72,255),pocketFront(74,92,99,255),band(36,48,54,255);
+    panel(0.158f,0.78f,1.07f,0.013f,0.0165f,0.020f,pocketBack);
+    {
+        const Vector3 a{x-0.155f,0.80f,depth(0.0165f)},b{x+0.155f,0.80f,depth(0.0165f)};
+        const Vector3 c{x+0.155f,1.045f,depth(0.030f)},d{x-0.155f,1.045f,depth(0.030f)};
+        if (direction>0) mesh.addQuad(a,b,c,d,pocketFront);
+        else mesh.addQuad(d,c,b,a,pocketFront);
+        for (float side : {-1.0f,1.0f})
+        {
+            const float gx=x+side*0.155f;
+            const Vector3 g0{gx,0.80f,depth(0.0165f)},g1{gx,1.045f,depth(0.0165f)},g2{gx,1.045f,depth(0.030f)};
+            if ((side>0)==(direction>0)) mesh.addTriangle(g0,g1,g2,band);
+            else mesh.addTriangle(g0,g2,g1,band);
+        }
+        strip(x-0.158f,x+0.158f,1.038f,1.052f,0.027f,0.034f,band);
+        strip(x-0.095f,x+0.095f,1.00f,1.115f,0.020f,0.024f,Color(226,228,220,255));
+        strip(x-0.095f,x+0.095f,1.085f,1.115f,0.0195f,0.0245f,Color(53,112,140,255));
+    }
     // Object-local millimetre-scale polymer grain, independent of route position.
     mesh.projectXYDetailUVs(firstVertex,{x-0.207f,0.68f,rearZ},0.12f);
 }

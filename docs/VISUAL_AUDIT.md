@@ -11,7 +11,7 @@ The baseline has **three additional findings**, ENV-121 from ceiling close views
 ENV-122 from canopy inspection and ENV-123 from shoreline refinement.
 Total scope is **123 findings**; original IDs are stable.
 
-Current disposition: **82 addressed, 41 open**. ENV-001 through ENV-080, ENV-122 and ENV-123 have
+Current disposition: **94 addressed, 29 open**. ENV-001 through ENV-092, ENV-122 and ENV-123 have
 repair evidence below; this does not close broader glazing or fabric realism.
 
 ## Evidence and limits
@@ -140,18 +140,18 @@ not exist. "Not visible" is limited to the cited view.
 | 078 ENV-078 | ADDRESSED | The ladder has slim stiles, 22 mm rungs, stand-off brackets to the mast and a landing with hoop guard at head level. | signal |
 | 079 ENV-079 | ADDRESSED | The mast has a bolted base flange and access panel; the cabinet has hinges, a lock, louvres and a conduit up the mast. | signal |
 | 080 ENV-080 | ADDRESSED | Contact and messenger wires are pitched chords between absolute 12.5 m route points, continuous through curves and chunk seams. | train-side, train-front |
-| 081 ENV-081 | P3 | Seat-back handhold is a black oval patch rather than a convincing recessed grip. Add cavity/rim depth. | seat-rear-close |
-| 082 ENV-082 | P3 | Literature pockets are rigid flat grey panels with a thick lip. Give the pocket a believable opening and material. | seat-rear-close |
-| 083 ENV-083 | P3 | Seat support posts are plain rectangular metal extrusions with weak finish. Refine cross-section and surface response. | seat-front-close |
-| 084 ENV-084 | P3 | Seat pedestal plates look like large flat hexagons with little edge refinement. Improve low-cost bevel/contact treatment. | seat-front-close |
-| 085 ENV-085 | P3 | Luggage cases on overhead racks are plain coloured blocks without readable handles/seams. Improve the modular luggage asset. | car-5-aisle |
-| 086 ENV-086 | P3 | Staff cab door is a flat dark slab whose warning frame dominates its construction. Add credible door edge/recess details. | car-1-aisle, car-6-aisle |
-| 087 ENV-087 | P3 | Cab door handle is a simple yellow bar without mount/lock detail. Add believable hardware. | car-1-aisle |
-| 088 ENV-088 | P3 | Fire extinguisher is a faceted red tube with no readable hose/gauge/bracket assembly. Improve the recognizable safety prop. | vestibule, car-6-aisle |
-| 089 ENV-089 | P3 | Emergency intercom is a block with unlabelled coloured squares. Add speaker/control legends and distinct button construction. | car-6-aisle |
-| 090 ENV-090 | P3 | End-wall panel fasteners are conspicuous identical white dots. Reduce contrast and seat them plausibly in the panel. | vestibule |
-| 091 ENV-091 | P3 | Gangway door kickplates resemble raised vent bars. Give them a coherent protective plate material/profile. | gangway |
-| 092 ENV-092 | P3 | Gangway handrails terminate abruptly without end caps or returns. Finish exposed rail ends. | gangway |
+| 081 ENV-081 | ADDRESSED | The grip is a dark cavity inside a proud bevelled rim, shadowed along its top edge and lit along the bottom, so it reads as a recess. | seat-rear-close |
+| 082 ENV-082 | ADDRESSED | The pocket is a flush fabric back with an elastic front leaning open to a stitched mouth, side gussets and a leaflet standing in it. | seat-rear-close |
+| 083 ENV-083 | ADDRESSED | Posts are collared twelve-sided columns with a darker lower collar and an upper collar under the seat frame. | seat-front-close |
+| 084 ENV-084 | ADDRESSED | Base plates are two-step bevelled discs with a central boss and the bolt pair, within the old footprint and contact shadow. | seat-front-close |
+| 085 ENV-085 | ADDRESSED | Cases are rounded shells with a seam band, corner guards, a loop handle on posts, a zip line and castors on wheeled cases. | car-5-aisle |
+| 086 ENV-086 | ADDRESSED | The leaf sits 15 mm back inside a proud frame with gap lines, three hinge knuckles and a brushed kick plate. | car-1-aisle, car-6-aisle |
+| 087 ENV-087 | ADDRESSED | A dark escutcheon carries a lever on a round stem and a lock cylinder, placed below the warning band. | car-1-aisle |
+| 088 ENV-088 | ADDRESSED | The extinguisher has a wall strap bracket with base cup, a clipped hose with nozzle and a gauge on the valve. | vestibule, car-6-aisle |
+| 089 ENV-089 | ADDRESSED | The intercom has a bezelled housing, a domed red call button in a raised ring, an answer lamp with bezel and EMERGENCY / PRESS AND SPEAK legends. | car-6-aisle |
+| 090 ENV-090 | ADDRESSED | Fasteners are 14 mm heads close to the panel tone, seated in a darker countersink ring. | vestibule |
+| 091 ENV-091 | ADDRESSED | The bridge plate is a crowned plate with fine lengthwise grooves, hinge lines and yellow nosings instead of raised transverse bars. | gangway |
+| 092 ENV-092 | ADDRESSED | Both grab rails end in domed caps above and below their wall mounts. | gangway |
 | 093 ENV-093 | P3 | Toilet fixture looks like a household cistern/bowl, not a compact train installation. Redesign the visible housing coherently. | toilet |
 | 094 ENV-094 | P3 | Toilet bowl has weak separation of seat/lid/rim. Make those basic parts legible. | toilet |
 | 095 ENV-095 | P3 | Toilet flush control is not recognizable in the fixture view. Add a visible labelled control. | toilet |
@@ -1898,5 +1898,46 @@ signal lens positions at both facings and sides. 600-frame rural sample: **94
 draws unchanged**, **1,392,266 → 1,422,530** triangles, **1,166 fence posts**;
 steady mean **25.5 → 25.5 ms**, p95 **26.2 → 25.8 ms**, p99 **26.6 → 25.9 ms**,
 maximum **29.4 → 26.2 ms**; initial rebuild **126.6 → 139.8 ms**. Prefix:
-`lineside-`. ENV-076 to ENV-080 are addressed; ENV-081 onward and ENV-121
+`lineside-`. ENV-076 to ENV-080 are addressed.
+
+### Close passenger fittings: ENV-081 to ENV-092
+
+`InteriorFittingsGeometry.hpp` collects the close-inspection fittings; the seat
+rear shell changes live in `InteriorGeometry.hpp`. Grip recess: a dark cavity
+inside a proud bevelled rim with a shadow strip along the upper inner edge and a
+lit strip along the lower one. Literature pocket: flush fabric back, an elastic
+front quad leaning from the shell to a stitched mouth band 34 mm out, two side
+gussets and a leaflet with a coloured header; the shell stays inside its 55 mm
+rear envelope and 600-triangle budget, so strips are plain boxes. Seat support:
+two-step bevelled base disc, boss, collared twelve-sided column and upper collar
+within the earlier footprint. Luggage: rounded shells, seam band, corner guards,
+loop handle, zip line and castors on alternate cases. Cab door: recessed leaf in
+a proud frame with gap lines, hinge knuckles, kick plate, escutcheon, round-stem
+lever and lock cylinder below the warning band (the first build placed the lever
+over the STAFF ONLY frame and was corrected). Extinguisher: strap bracket with
+base cup, hose clipped down the body with nozzle, gauge on the valve. Intercom:
+bezelled housing, domed red button in a raised ring, bezelled answer lamp and
+printed EMERGENCY / PRESS AND SPEAK legends. End-wall fasteners: 14 mm heads
+close to the panel tone in darker countersinks. Gangway: a grooved crowned
+bridge plate with hinge lines and yellow nosings; domed caps on both grab rails.
+
+Inspected matched seat rear [before](../build/visual-audit/interior-fittings-seat-rear-detail-before.png) /
+[after](../build/visual-audit/interior-fittings-seat-rear-detail-after.png),
+pedestal before/after, car aisles 1/5/6, vestibule and gangway, plus the
+`interior-close-` views captured with the same before binary: luggage, the
+[cab door before](../build/visual-audit/interior-close-cab-door-close-before.png) /
+[after](../build/visual-audit/interior-close-cab-door-close-after.png), the car 6
+end wall with extinguisher and intercom, and the intercom close view. Four new
+unit tests cover the pedestal footprint, suitcase envelope, cab-door hardware
+projection/side and the plate/intercom bounds; the existing seat-shell envelope
+and budget tests still pass. 600-frame seated car 3 sample: **94 draws
+unchanged**, **1,422,530 → 1,432,962** triangles; steady mean **25.5 → 26.6 ms**,
+p95 **26.1 → 31.7 ms**, p99 **26.4 → 35.6 ms**, maximum **27.4 → 47.4 ms**. The
+after run coincided with a host load average above 24 from other agents; the
+same binary measured p95 **25.8 ms** / p99 **27.0 ms** in an earlier quieter
+run (`interior-close-performance-after.log` of that pass was overwritten by the
+final capture), and the geometry delta is 0.7 %, so the slower figures are
+attributed to host load rather than the fittings. Re-measure on a quiet host
+before treating this as a regression. Prefixes: `interior-fittings-`,
+`interior-close-`. ENV-081 to ENV-092 are addressed; ENV-093 onward and ENV-121
 remain open.

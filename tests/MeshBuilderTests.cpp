@@ -15,6 +15,7 @@
 #include "trainsim/render/TrackGeometry.hpp"
 #include "trainsim/render/LinesideGeometry.hpp"
 #include "trainsim/render/SignalGeometry.hpp"
+#include "trainsim/render/InteriorFittingsGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -3642,4 +3643,97 @@ TEST_CASE("colour light signal keeps lens centres where the live aspect pass dra
             REQUIRE(highest > 4.75f);
             REQUIRE(highest < 5.0f);
         }
+}
+
+TEST_CASE("seat pedestal stays inside the old footprint with a stepped base")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder mesh;
+    addSeatPedestal(mesh,0.55f,-12.0f,Color(95,99,99,255));
+    float lowest = 1.0f,highest = 0.0f,widest = 0.0f;
+    for (const auto& vertex : mesh.data().vertices)
+    {
+        const float dx = vertex.position.X-0.55f,dz = vertex.position.Z+12.0f;
+        widest = std::max(widest,std::sqrt(dx*dx+dz*dz));
+        lowest = std::min(lowest,vertex.position.Y);
+        highest = std::max(highest,vertex.position.Y);
+        // Nothing above the base plate is as wide as the plate: the profile steps inward.
+        if (vertex.position.Y > 0.12f) REQUIRE(std::sqrt(dx*dx+dz*dz) <= 0.065f);
+    }
+    REQUIRE(widest <= 0.1251f);
+    REQUIRE(std::abs(lowest-0.08f) < 1.0e-5f);
+    REQUIRE(highest <= 0.42f);
+}
+
+TEST_CASE("rack suitcase handle and castors stay within the shelf envelope")
+{
+    using namespace TrainSim::Render;
+    for (const bool wheeled : {false,true})
+    {
+        MeshBuilder mesh;
+        addRackSuitcase(mesh,0.93f,1.19f,20.0f,0.43f,2.46f,Color(125,67,52,255),wheeled);
+        float highest = 0.0f;
+        for (const auto& vertex : mesh.data().vertices)
+        {
+            REQUIRE(vertex.position.X >= 0.93f-0.005f);
+            REQUIRE(vertex.position.X <= 1.19f+0.005f);
+            REQUIRE(vertex.position.Y >= 2.23f-0.02f);
+            REQUIRE(std::abs(vertex.position.Z-20.0f) <= 0.43f+0.005f);
+            highest = std::max(highest,vertex.position.Y);
+        }
+        REQUIRE(std::abs(highest-(2.46f+0.075f)) < 1.0e-4f);
+    }
+    MeshBuilder plain,wheeledCase;
+    addRackSuitcase(plain,0.93f,1.19f,20.0f,0.43f,2.46f,Color(125,67,52,255),false);
+    addRackSuitcase(wheeledCase,0.93f,1.19f,20.0f,0.43f,2.46f,Color(125,67,52,255),true);
+    REQUIRE(wheeledCase.data().indices.size() > plain.data().indices.size());
+}
+
+TEST_CASE("cab door hardware projects from the saloon face only and clears the warning band")
+{
+    using namespace TrainSim::Render;
+    for (const auto& [z,face] : {std::pair{-63.2f,1.0f},std::pair{63.2f,-1.0f}})
+    {
+        MeshBuilder mesh;
+        addCabDoorHardware(mesh,z,face);
+        const float surface = z+face*0.10f;
+        const std::uint32_t handle = Color(222,186,53,255).getPackedValueProperty();
+        bool sawHandle = false;
+        for (const auto& vertex : mesh.data().vertices)
+        {
+            REQUIRE((vertex.position.Z-surface)*face >= -1.0e-4f);
+            REQUIRE((vertex.position.Z-surface)*face <= 0.076f);
+            REQUIRE(std::abs(vertex.position.X) <= 0.60f+1.0e-5f);
+            if (vertex.color == handle)
+            {
+                sawHandle = true;
+                REQUIRE(vertex.position.Y < 0.72f);
+                REQUIRE(vertex.position.X > 0.2f);
+            }
+        }
+        REQUIRE(sawHandle);
+    }
+}
+
+TEST_CASE("gangway bridge plate grooves stay flush and the emergency intercom is bounded")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder plate;
+    addGangwayBridgePlate(plate,31.5f);
+    for (const auto& vertex : plate.data().vertices)
+    {
+        REQUIRE(vertex.position.Y >= 0.08f-1.0e-5f);
+        REQUIRE(vertex.position.Y <= 0.104f+1.0e-5f);
+        REQUIRE(std::abs(vertex.position.Z-31.5f) <= 0.34f+1.0e-5f);
+    }
+    MeshBuilder intercom;
+    addEmergencyIntercom(intercom,-1.0f,63.08f);
+    for (const auto& vertex : intercom.data().vertices)
+    {
+        REQUIRE(std::abs(vertex.position.X+1.0f) <= 0.23f+1.0e-5f);
+        REQUIRE(vertex.position.Y >= 1.05f-1.0e-5f);
+        REQUIRE(vertex.position.Y <= 1.78f+1.0e-5f);
+        REQUIRE(vertex.position.Z <= 63.08f-0.020f+1.0e-5f);
+        REQUIRE(vertex.position.Z >= 63.08f-0.075f-0.045f);
+    }
 }

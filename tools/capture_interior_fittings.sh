@@ -28,6 +28,13 @@ capture cab-door --car 1 --route-km 52 --audit-camera 0.0 1.9 -46 0 0
 capture car-6-aisle --car 6 --route-km 52
 capture vestibule --vestibule-view --car 3
 capture gangway --gangway-view --car 3
+if [[ "$prefix" == interior-close ]]; then
+    # Train-local Z: car 5 spans about +21..+42 m; the rear cab bulkhead is at +63.2 m.
+    capture luggage-close --car 5 --route-km 52 --audit-camera 0.3 1.8 26.5 165 22
+    capture cab-door-close --car 1 --route-km 52 --audit-camera 0.0 1.6 -58.5 0 -2
+    capture end-wall-close --car 6 --route-km 52 --audit-camera 0.0 1.5 60.6 180 -8
+    capture intercom-close --car 6 --route-km 52 --audit-camera -0.6 1.5 61.6 160 -4
+fi
 ./build/train-simulator --frames 600 --quality 2 --time-scale 0.000001 \
     --no-audio --no-avatars --hide-hud --config tests/facade-comparison.cfg \
     --route-km 52 --car 3 --report-state >"$output/$prefix-performance-$stage.log" 2>&1
