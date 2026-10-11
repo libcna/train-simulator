@@ -68,6 +68,7 @@
 #include <cmath>
 #include <chrono>
 #include <optional>
+#include <future>
 #include <string_view>
 #include <utility>
 
@@ -429,6 +430,150 @@ struct SceneRenderer::AvatarVisual
     bool facingInitialized = false;
     bool gpuPrimed = false;
 };
+
+struct SceneRenderer::WorldStreamingState
+{
+    // One CPU window and two GPU windows, regardless of journey length. A future owns
+    // the CPU window during generation; only the render thread ever owns GPU objects.
+    std::unique_ptr<WorldGeometry> geometry = std::make_unique<WorldGeometry>();
+    std::future<std::unique_ptr<WorldGeometry>> worker;
+    std::array<std::unique_ptr<GpuMesh>,kWorldMaterialCount> staged;
+    std::int64_t target = -1;
+    double anchor = 0;
+    int quality = -1;
+    float vegetation = 0;
+    std::size_t uploaded = 0;
+    bool generationRecorded = false;
+    std::uint64_t prefetchHits = 0;
+    std::uint64_t synchronousBuilds = 0;
+    std::uint64_t latePrefetches = 0;
+};
+
+void SceneRenderer::updateStaticWorld(const Sim::Route& route,
+                                     const World::StreamingWorld& world,
+                                     const Sim::ServiceState& service)
+{
+    const auto begin = std::chrono::steady_clock::now();
+    if (!worldStreaming_) worldStreaming_ = std::make_unique<WorldStreamingState>();
+    auto& stream = *worldStreaming_;
+    const auto current = world.currentChunk();
+    const auto next = nextWorldChunk(current, service.direction,
+                                    route.lengthMetres(), world.chunkLength());
+    const auto collect = [&] {
+        if (stream.worker.valid()) stream.geometry = stream.worker.get();
+    };
+    const auto recordGeneration = [&] {
+        if (stream.generationRecorded) return;
+        worldGenerationTotalMs_ += stream.geometry->generationMs;
+        worldGenerationMaxMs_ = std::max(worldGenerationMaxMs_,stream.geometry->generationMs);
+        routePointCacheHits_ += stream.geometry->cacheHits;
+        routePointCacheMisses_ += stream.geometry->cacheMisses;
+        stream.generationRecorded = true;
+    };
+    const auto uploadOne = [&] {
+        const auto uploadStart = std::chrono::steady_clock::now();
+        auto& target = stream.staged[stream.uploaded];
+        const auto& data = stream.geometry->meshes[stream.uploaded].data();
+        if (data.empty()) target.reset();
+        else if (target) worldBufferReuses_ += static_cast<std::uint64_t>(target->replace(device_,data));
+        else target = std::make_unique<GpuMesh>(device_,data,true);
+        ++stream.uploaded;
+        const double ms = std::chrono::duration<double,std::milli>(
+            std::chrono::steady_clock::now()-uploadStart).count();
+        worldUploadTotalMs_ += ms;
+        worldUploadMaxMs_ = std::max(worldUploadMaxMs_,ms);
+    };
+    const auto resetJob = [&](std::int64_t chunk) {
+        stream.target = chunk;
+        stream.anchor = std::clamp((static_cast<double>(chunk)+0.5)*world.chunkLength(),
+                                   0.0,route.lengthMetres());
+        stream.quality = graphicsQuality_;
+        stream.vegetation = vegetationDistanceMetres_;
+        stream.uploaded = 0;
+        stream.generationRecorded = false;
+    };
+    // Quality/range changes, teleports and reversals must never publish obsolete output.
+    if (stream.target != -1 && (stream.quality != graphicsQuality_
+        || stream.vegetation != vegetationDistanceMetres_
+        || (stream.target != current && stream.target != next)))
+    {
+        collect();
+        stream.target = -1;
+    }
+    if (!staticWorld_ || worldAnchorChunk_ != current)
+    {
+        if (stream.target == current)
+        {
+            if (stream.worker.valid()
+                && stream.worker.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+                ++stream.latePrefetches;
+            else if (stream.uploaded == kWorldMaterialCount) ++stream.prefetchHits;
+            else ++stream.latePrefetches;
+            collect();
+        }
+        else
+        {
+            collect();
+            resetJob(current);
+            stream.geometry->build(route,world,stream.anchor,graphicsQuality_,vegetationDistanceMetres_);
+            ++stream.synchronousBuilds;
+        }
+        recordGeneration();
+        // Initial load / a discontinuous jump still needs a complete scene immediately.
+        // A normal boundary only swaps the already prepared buffers and counters.
+        while (stream.uploaded < kWorldMaterialCount) uploadOne();
+        std::array<std::unique_ptr<GpuMesh>*,kWorldMaterialCount> active = {
+            &terrain_, &foliageMaterial_, &needleMaterial_, &leafSprays_, &needleSprays_,
+            &roofMaterial_, &waterMaterial_, &facadeMaterial_, &renderedFacadeMaterial_,
+            &staticWorld_, &stationLettering_, &staticWorldShadows_, &platformMaterial_, &worldLuminaires_};
+        for (std::size_t i=0; i<active.size(); ++i) active[i]->swap(stream.staged[i]);
+        worldCounters_ = stream.geometry->counters;
+        worldAnchorChunk_ = current;
+        worldAnchorDistance_ = stream.anchor;
+        stream.target = -1;
+        ++worldRebuilds_;
+    }
+    else if (stream.target != -1)
+    {
+        if (stream.worker.valid()
+            && stream.worker.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            collect();
+        if (!stream.worker.valid())
+        {
+            recordGeneration();
+            // Empty materials need no upload and must not consume a whole frame. Low
+            // quality has many empty slots; wasting fourteen frames could miss a boundary
+            // even when the few actual uploads take only milliseconds.
+            const auto skipEmpty = [&] {
+                while (stream.uploaded < kWorldMaterialCount
+                    && stream.geometry->meshes[stream.uploaded].data().empty()) uploadOne();
+            };
+            skipEmpty();
+            // At most one non-empty material submission; the current scene is untouched.
+            if (stream.uploaded < kWorldMaterialCount) uploadOne();
+            skipEmpty();
+        }
+    }
+    if (stream.target == -1 && next != current)
+    {
+        resetJob(next);
+        // Own the route and world snapshot in the job, so neither simulation updates nor
+        // renderer destruction can race geometry generation. Destruction joins the future.
+        stream.worker = std::async(std::launch::async,
+            [geometry=std::move(stream.geometry), routeCopy=route,
+             length=world.chunkLength(), radius=world.radius(), anchor=stream.anchor,
+             quality=graphicsQuality_, vegetation=vegetationDistanceMetres_]() mutable {
+                World::StreamingWorld snapshot(routeCopy,length,radius);
+                snapshot.update(anchor);
+                geometry->build(routeCopy,snapshot,anchor,quality,vegetation);
+                return std::move(geometry);
+            });
+    }
+    const double ms = std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-begin).count();
+    worldRebuildTotalMs_ += ms;
+    worldRebuildMaxMs_ = std::max(worldRebuildMaxMs_,ms);
+}
 
 SceneRenderer::SceneRenderer(GraphicsDevice& device, float vegetationDistanceMetres,
                              int graphicsQuality, bool passengerDoorsInitiallyOpen,
@@ -1342,46 +1487,34 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
     trackAnchorDistance_ = anchorDistance;
 }
 
-void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
+void WorldGeometry::build(const Sim::Route& route,
                                        const World::StreamingWorld& world,
-                                       double anchorDistance)
+                                       double anchorDistance, int graphicsQuality, float vegetationDistance)
 {
+    graphicsQuality_ = graphicsQuality;
+    vegetationDistanceMetres_ = vegetationDistance;
     const auto generationStart = std::chrono::steady_clock::now();
     RoutePointCache routePointCache;
     const auto localRoutePoint = [&routePointCache](const Sim::Route& sampledRoute,
         double reference,double distance,double lateral=0.0) {
         return routePointCache.point(sampledRoute,reference,distance,lateral);
     };
-    // Retain the largest CPU staging allocation between chunk transitions. GpuMesh uploads
-    // snapshot their input; clearing this staging buffer next time cannot alter a submitted mesh.
-    if (!worldMeshScratch_)
-    {
-        worldMeshScratch_ = std::make_unique<MeshBuilder>();
-        worldMeshScratch_->reserve(190'000,300'000);
-    }
-    MeshBuilder& mesh = *worldMeshScratch_;
-    mesh.clear();
-    MeshBuilder terrain;
-    // These high-volume batches previously grew fresh vectors at every 250 m transition.
-    // Retain one staging buffer per material, just like the opaque world batch. GPU uploads
-    // snapshot the data; clear() keeps capacity but removes every previous chunk's vertices.
-    if (!foliageMeshScratch_) foliageMeshScratch_=std::make_unique<MeshBuilder>();
-    if (!needleMeshScratch_) needleMeshScratch_=std::make_unique<MeshBuilder>();
-    MeshBuilder& foliageMaterial=*foliageMeshScratch_;
-    MeshBuilder& needleMaterial=*needleMeshScratch_;
-    foliageMaterial.clear();
-    needleMaterial.clear();
-    MeshBuilder leafSprays;
-    MeshBuilder needleSprays;
-    MeshBuilder roofMaterial;
+    for (auto& batch : meshes) batch.clear();
+    auto& terrain = meshes[0];
+    auto& foliageMaterial = meshes[1];
+    auto& needleMaterial = meshes[2];
+    auto& leafSprays = meshes[3];
+    auto& needleSprays = meshes[4];
+    auto& roofMaterial = meshes[5];
+    auto& waterMaterial = meshes[6];
+    auto& facadeMaterial = meshes[7];
+    auto& renderedFacadeMaterial = meshes[8];
+    auto& mesh = meshes[9];
+    auto& stationLettering = meshes[10];
+    auto& groundShadows = meshes[11];
+    auto& platformMaterial = meshes[12];
+    auto& worldLuminaires = meshes[13];
     MeshBuilder& roofSurface=graphicsQuality_>=1 ? roofMaterial : mesh;
-    MeshBuilder waterMaterial;
-    MeshBuilder facadeMaterial;
-    MeshBuilder renderedFacadeMaterial;
-    MeshBuilder worldLuminaires;
-    MeshBuilder groundShadows;
-    MeshBuilder platformMaterial;
-    MeshBuilder stationLettering;
     // Seven high-quality chunks, a nearby station, and dense rural vegetation fit below these
     // capacities on the authored route. Reserving once keeps streaming rebuilds allocation-light.
     terrain.reserve(4'000,6'000);
@@ -1391,61 +1524,61 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
     worldLuminaires.reserve(40'000, 60'000);
     groundShadows.reserve(2'000,3'000);
     platformMaterial.reserve(256,384);
-    staticWorldLakePatches_ = 0;
-    staticWorldLakeBankTrees_ = 0;
-    staticWorldHayBaleStacks_ = 0;
-    staticWorldRiverWaterSections_ = 0;
-    staticWorldRiverBankClumps_ = 0;
-    staticWorldStationWaterfrontSections_ = 0;
-    staticWorldCatenaryDroppers_ = 0;
-    staticWorldCatenaryFoundations_ = 0;
-    staticWorldCatenaryMessengerSegments_ = 0;
-    staticWorldCatenaryRegistrationAssemblies_ = 0;
-    staticWorldLinesideEquipmentCabinets_ = 0;
-    staticWorldTunnelLuminaires_ = 0;
-    staticWorldTunnelSafetyNiches_ = 0;
-    staticWorldTunnelLiningRings_ = 0;
-    staticWorldTunnelMarkerPlates_ = 0;
-    staticWorldBridgeSections_ = 0;
-    staticWorldRiverBridgeSections_ = 0;
-    staticWorldViaductSections_ = 0;
-    staticWorldBridgeAbutments_ = 0;
-    staticWorldTerminalBufferStops_ = 0;
-    staticWorldTerminalShedColumns_ = 0;
-    staticWorldBridgeParapetPosts_ = 0;
-    staticWorldFencePosts_ = 0;
-    staticWorldPlatformSurfaceJoints_ = 0;
-    staticWorldPlatformCanopyLights_ = 0;
-    staticWorldPlatformCanopyDrainageAssemblies_ = 0;
-    staticWorldPlatformPlanters_ = 0;
-    staticWorldPlatformPosterCases_ = 0;
-    staticWorldPlatformEquipmentCabinets_ = 0;
-    staticWorldPlatformBenchAssemblies_ = 0;
-    staticWorldPlatformWeatheringMarks_ = 0;
-    staticWorldStationFacadeWeatheringStreaks_ = 0;
-    staticWorldPlatformBoundarySections_ = 0;
-    staticWorldTracksideDrainageSections_ = 0;
-    staticWorldTracksideVergeTufts_ = 0;
-    staticWorldFieldBoundarySegments_ = 0;
-    staticWorldDistantWoodlandTrees_ = 0;
-    staticWorldDistantRidgeMasses_ = 0;
-    staticWorldTreeBranchCues_ = 0;
-    staticWorldConiferBranchTiers_ = 0;
-    staticWorldUnderstoreyGroups_ = 0;
-    staticWorldDistantSettlementBuildings_ = 0;
-    staticWorldBuildingEndWallWindows_ = 0;
-    staticWorldTowerEndWallWindows_ = 0;
-    staticWorldDetailedWarehouses_ = 0;
-    staticWorldIndustrialCompounds_ = 0;
-    staticWorldIndustrialYardVehicles_ = 0;
-    staticWorldIndustrialTrailers_ = 0;
-    staticWorldIndustrialUtilityGroups_ = 0;
-    staticWorldIndustrialEdgePlantingGroups_ = 0;
-    staticWorldUrbanRoadEdgeMarkingSections_ = 0;
-    staticWorldUrbanRoadDrainGrates_ = 0;
-    staticWorldUrbanResidentialPlotSurfaces_ = 0;
-    staticWorldUrbanStreetPockets_ = 0;
-    staticWorldUrbanResidentialEntrancePaths_ = 0;
+    counters.staticWorldLakePatches_ = 0;
+    counters.staticWorldLakeBankTrees_ = 0;
+    counters.staticWorldHayBaleStacks_ = 0;
+    counters.staticWorldRiverWaterSections_ = 0;
+    counters.staticWorldRiverBankClumps_ = 0;
+    counters.staticWorldStationWaterfrontSections_ = 0;
+    counters.staticWorldCatenaryDroppers_ = 0;
+    counters.staticWorldCatenaryFoundations_ = 0;
+    counters.staticWorldCatenaryMessengerSegments_ = 0;
+    counters.staticWorldCatenaryRegistrationAssemblies_ = 0;
+    counters.staticWorldLinesideEquipmentCabinets_ = 0;
+    counters.staticWorldTunnelLuminaires_ = 0;
+    counters.staticWorldTunnelSafetyNiches_ = 0;
+    counters.staticWorldTunnelLiningRings_ = 0;
+    counters.staticWorldTunnelMarkerPlates_ = 0;
+    counters.staticWorldBridgeSections_ = 0;
+    counters.staticWorldRiverBridgeSections_ = 0;
+    counters.staticWorldViaductSections_ = 0;
+    counters.staticWorldBridgeAbutments_ = 0;
+    counters.staticWorldTerminalBufferStops_ = 0;
+    counters.staticWorldTerminalShedColumns_ = 0;
+    counters.staticWorldBridgeParapetPosts_ = 0;
+    counters.staticWorldFencePosts_ = 0;
+    counters.staticWorldPlatformSurfaceJoints_ = 0;
+    counters.staticWorldPlatformCanopyLights_ = 0;
+    counters.staticWorldPlatformCanopyDrainageAssemblies_ = 0;
+    counters.staticWorldPlatformPlanters_ = 0;
+    counters.staticWorldPlatformPosterCases_ = 0;
+    counters.staticWorldPlatformEquipmentCabinets_ = 0;
+    counters.staticWorldPlatformBenchAssemblies_ = 0;
+    counters.staticWorldPlatformWeatheringMarks_ = 0;
+    counters.staticWorldStationFacadeWeatheringStreaks_ = 0;
+    counters.staticWorldPlatformBoundarySections_ = 0;
+    counters.staticWorldTracksideDrainageSections_ = 0;
+    counters.staticWorldTracksideVergeTufts_ = 0;
+    counters.staticWorldFieldBoundarySegments_ = 0;
+    counters.staticWorldDistantWoodlandTrees_ = 0;
+    counters.staticWorldDistantRidgeMasses_ = 0;
+    counters.staticWorldTreeBranchCues_ = 0;
+    counters.staticWorldConiferBranchTiers_ = 0;
+    counters.staticWorldUnderstoreyGroups_ = 0;
+    counters.staticWorldDistantSettlementBuildings_ = 0;
+    counters.staticWorldBuildingEndWallWindows_ = 0;
+    counters.staticWorldTowerEndWallWindows_ = 0;
+    counters.staticWorldDetailedWarehouses_ = 0;
+    counters.staticWorldIndustrialCompounds_ = 0;
+    counters.staticWorldIndustrialYardVehicles_ = 0;
+    counters.staticWorldIndustrialTrailers_ = 0;
+    counters.staticWorldIndustrialUtilityGroups_ = 0;
+    counters.staticWorldIndustrialEdgePlantingGroups_ = 0;
+    counters.staticWorldUrbanRoadEdgeMarkingSections_ = 0;
+    counters.staticWorldUrbanRoadDrainGrates_ = 0;
+    counters.staticWorldUrbanResidentialPlotSurfaces_ = 0;
+    counters.staticWorldUrbanStreetPockets_ = 0;
+    counters.staticWorldUrbanResidentialEntrancePaths_ = 0;
     const double anchorElevation = route.sample(anchorDistance).elevation;
     const auto addFacadeMaterial = [](
         MeshBuilder& target, const LocalRoutePoint& point, bool positiveLateral,
@@ -1572,7 +1705,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                width-0.07f,0.045f,0.145f,point.yaw,frame);
             }
         }
-        ++staticWorldBuildingEndWallWindows_;
+        ++counters.staticWorldBuildingEndWallWindows_;
     };
     for (const World::Chunk& chunk : world.chunks())
     {
@@ -1722,7 +1855,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             if (d0 >= chunk.beginDistance && d0 < chunk.endDistance
                 && !pose.tunnel && !pose.bridge && pose.urbanity < 0.55
                 && pose.adjacentWaterSide == 0)
-                staticWorldTracksideDrainageSections_ += 2;
+                counters.staticWorldTracksideDrainageSections_ += 2;
         }
 
         // Absolute route slots add the modest signalling/telecom cabinets that line a maintained
@@ -1782,7 +1915,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             if (graphicsQuality_ >= 1)
                 addOrientedGroundQuad(groundShadows,cabinet.x,cabinet.y+0.025f,cabinet.z,
                                       1.22f,0.90f,cabinet.yaw,Color(8,12,11,34));
-            ++staticWorldLinesideEquipmentCabinets_;
+            ++counters.staticWorldLinesideEquipmentCabinets_;
         }
 
         // The Lakehurst approach follows a level upland lake for several kilometres. Route data
@@ -1833,7 +1966,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     Vector3{d.x,d.y,d.z},Vector3{c.x,c.y,c.z},
                     Vector3{b.x,b.y,b.z},Vector3{a.x,a.y,a.z},
                     deepWater,deepWater,shoreWater,shoreWater,uvD,uvC,uvB,uvA);
-            ++staticWorldLakePatches_;
+            ++counters.staticWorldLakePatches_;
 
             if (d0<chunk.beginDistance || d0>=chunk.endDistance) continue;
 
@@ -1883,7 +2016,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     const int variant = static_cast<int>(placement.variant);
                     if (variant == 0)
                     {
-                        staticWorldConiferBranchTiers_ += addLayeredConifer(
+                        counters.staticWorldConiferBranchTiers_ += addLayeredConifer(
                             mesh,Vector3{bank.x,bank.y,bank.z},treeScale,7,
                             static_cast<std::uint32_t>(variant),Color(38,83,45,255),
                             Color(54,97,55,255),false);
@@ -1897,7 +2030,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                             Vector3{2.15f*treeScale,2.25f*treeScale,1.75f*treeScale},
                             7,4,crown);
                     }
-                    ++staticWorldLakeBankTrees_;
+                    ++counters.staticWorldLakeBankTrees_;
                 }
             }
         }
@@ -1957,7 +2090,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     kRiverBandColours[band+1],kRiverBandColours[band+1],
                     uvA,uvB,uvC,uvD);
             }
-            ++staticWorldRiverWaterSections_;
+            ++counters.staticWorldRiverWaterSections_;
         }
 
         // Riparian vegetation belongs to the actual bank contour, not the field parcel edge.
@@ -1992,7 +2125,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         foliageMaterial.addFoliageLobe(root+Vector3{0,0.75f,0},
                             Vector3{2.2f,0.95f,1.7f},7,4,Color(68,104,49,255),true);
                     }
-                    ++staticWorldRiverBankClumps_;
+                    ++counters.staticWorldRiverBankClumps_;
                 }
             }
         if (pose.urbanity > 0.28 && !pose.tunnel && !pose.bridge)
@@ -2053,7 +2186,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             {
                 addStreetStrip(roadSide*edgeMagnitude,0.095f,-0.1925f,0.025f,
                                Color(215,211,194,255));
-                ++staticWorldUrbanRoadEdgeMarkingSections_;
+                ++counters.staticWorldUrbanRoadEdgeMarkingSections_;
             }
             double inletDistance = std::ceil(chunk.beginDistance/75.0)*75.0;
             for (; inletDistance < chunk.endDistance; inletDistance += 75.0)
@@ -2072,7 +2205,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                 Vector3{0.12f,0.008f,0.018f},
                                 Color(92,98,96,255),inletPlacement);
                 }
-                ++staticWorldUrbanRoadDrainGrates_;
+                ++counters.staticWorldUrbanRoadDrainGrates_;
             }
             for (double markingDistance = chunk.beginDistance + 6.0;
                  markingDistance < chunk.endDistance; markingDistance += 18.0)
@@ -2173,7 +2306,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                               wireEnd(wireEndDistance,parallel,
                                       kMessengerWireHeight-messengerSag(wireEndDistance)),
                               0.038f,Color(67,72,69,255),0.03f);
-                ++staticWorldCatenaryMessengerSegments_;
+                ++counters.staticWorldCatenaryMessengerSegments_;
             }
             wireBegin = wireEndDistance;
         }
@@ -2199,7 +2332,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                hanger.z,0.032f,
                                messengerHeight-kContactWireHeight,0.032f,
                                hanger.yaw,Color(76,82,78,255));
-                ++staticWorldCatenaryDroppers_;
+                ++counters.staticWorldCatenaryDroppers_;
             }
         }
 
@@ -2262,7 +2395,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             // cable tray on brackets. The textured face shares the streamed concrete material.
             for (const auto& [face,inward] : {std::pair{3.925,-1.0f},std::pair{-8.925,1.0f}})
             {
-                staticWorldTunnelLiningRings_ += addTunnelLiningSegment(
+                counters.staticWorldTunnelLiningRings_ += addTunnelLiningSegment(
                     mesh,platformMaterial,tunnelPoint,tunnelBegin,tunnelEnd,face,inward,
                     graphicsQuality_>0,tunnelStyle);
                 addTunnelServiceRuns(mesh,tunnelPoint,tunnelBegin,tunnelEnd,face,inward,
@@ -2283,7 +2416,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             if (!route.sample(nicheDistance).tunnel) continue;
             for (double side : {1.0, -1.0})
             {
-                ++staticWorldTunnelSafetyNiches_;
+                ++counters.staticWorldTunnelSafetyNiches_;
                 const double wallLateral = side > 0.0 ? 3.88 : -8.88;
                 const double faceLateral = side > 0.0 ? 3.82 : -8.82;
                 const LocalRoutePoint recess = localRoutePoint(
@@ -2336,14 +2469,14 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         tunnelExitLabel(nicheDistance,extent->first,extent->second),
                         nicheDistance+2.75,liningFace+inward*0.06,2.13f,
                         Color(236,246,232,255),0.66f);
-                    ++staticWorldTunnelMarkerPlates_;
+                    ++counters.staticWorldTunnelMarkerPlates_;
                 }
                 addTunnelWallPlate(mesh,tunnelPoint,nicheDistance-2.75,liningFace,inward,
                                    2.20f,0.46f,0.26f,Color(228,228,218,255));
                 addRoutePrintedText(stationLettering,route,anchorDistance,
                     tunnelChainageLabel(nicheDistance),nicheDistance-2.75,
                     liningFace+inward*0.06,2.14f,Color(28,30,30,255),0.38f);
-                ++staticWorldTunnelMarkerPlates_;
+                ++counters.staticWorldTunnelMarkerPlates_;
             }
         }
 
@@ -2358,7 +2491,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
              luminaireDistance += kLuminaireSpacing)
         {
             if (!route.sample(luminaireDistance).tunnel) continue;
-            ++staticWorldTunnelLuminaires_;
+            ++counters.staticWorldTunnelLuminaires_;
 
             const LocalRoutePoint ceiling = localRoutePoint(
                 route, anchorDistance, luminaireDistance, -2.5);
@@ -2386,9 +2519,9 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             const Sim::RoutePose bridgePose = route.sample(bridgeMiddle);
             if (!bridgePose.bridge) continue;
 
-            ++staticWorldBridgeSections_;
-            if (bridgePose.waterCrossing) ++staticWorldRiverBridgeSections_;
-            else ++staticWorldViaductSections_;
+            ++counters.staticWorldBridgeSections_;
+            if (bridgePose.waterCrossing) ++counters.staticWorldRiverBridgeSections_;
+            else ++counters.staticWorldViaductSections_;
             const float bridgeLength = static_cast<float>(bridgeEnd-bridgeBegin)+0.3f;
             const Color deckColor = bridgePose.waterCrossing
                 ? Color(82,91,94,255) : Color(112,113,107,255);
@@ -2431,7 +2564,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             };
             for (const auto& [lateral,outward] : {std::pair{-8.0,-1.0f},std::pair{3.0,1.0f}})
             {
-                staticWorldBridgeParapetPosts_ += addBridgeParapet(
+                counters.staticWorldBridgeParapetPosts_ += addBridgeParapet(
                     mesh,parapetPoint,bridgeBegin,bridgeEnd,lateral,outward,
                     beginsCrossing,endsCrossing,parapetStyle,graphicsQuality_>0);
                 if (bridgePose.waterCrossing)
@@ -2446,7 +2579,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
 
             if (beginsCrossing || endsCrossing)
             {
-                ++staticWorldBridgeAbutments_;
+                ++counters.staticWorldBridgeAbutments_;
                 const double boundaryDistance = beginsCrossing ? bridgeBegin : bridgeEnd;
                 const Color abutmentColor = bridgePose.waterCrossing
                     ? Color(116,119,115,255) : Color(132,130,121,255);
@@ -2539,7 +2672,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                 return localRoutePoint(route,anchorDistance,distance,lateral);
             };
             for (double side : {-1.0, 1.0})
-                staticWorldFencePosts_ += addLinesideFence(
+                counters.staticWorldFencePosts_ += addLinesideFence(
                     mesh,fencePoint,chunk.beginDistance,chunk.endDistance,
                     side*kFenceLateral,fenceEndsAtBegin,fenceEndsAtEnd);
         }
@@ -2582,7 +2715,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                        blade%3 == 0 ? Color(76,113,53,255)
                                                   : Color(86,124,57,255));
                     }
-                    ++staticWorldTracksideVergeTufts_;
+                    ++counters.staticWorldTracksideVergeTufts_;
                 }
             }
         }
@@ -2609,7 +2742,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                 },96.0f,1.10f,0.95f,Color(55,92,48,255),
                     static_cast<std::uint32_t>(boundaryDistance)+(side < 0 ? 31U : 0U),
                     graphicsQuality_>=1 ? &leafSprays : nullptr);
-                staticWorldFieldBoundarySegments_ += 10; // Ten nominal 9.6 m spans, now joined.
+                counters.staticWorldFieldBoundarySegments_ += 10; // Ten nominal 9.6 m spans, now joined.
             }
         }
 
@@ -2649,7 +2782,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                        scale,2.8f,5,Color(82,75,59,255));
                     if (variant%3U == 0U)
                     {
-                        staticWorldConiferBranchTiers_ += addLayeredConifer(
+                        counters.staticWorldConiferBranchTiers_ += addLayeredConifer(
                             mesh,Vector3{treePoint.x,treePoint.y,treePoint.z},scale,6,
                             variant,Color(50,82,58,255),Color(59,91,64,255),false);
                     }
@@ -2661,7 +2794,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                             6,3,variant%2U == 0U ? Color(57,91,63,255)
                                                   : Color(64,98,67,255));
                     }
-                    ++staticWorldDistantWoodlandTrees_;
+                    ++counters.staticWorldDistantWoodlandTrees_;
                 }
             }
         }
@@ -2698,7 +2831,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         return terrainSurfacePoint(middle+along,lateral+across);
                     },radius,height,static_cast<unsigned>(chunk.index*13+sideIndex*7+layer),
                         graphicsQuality_>=2 ? 12 : graphicsQuality_==1 ? 8 : 4,ridgeColor);
-                    ++staticWorldDistantRidgeMasses_;
+                    ++counters.staticWorldDistantRidgeMasses_;
                 }
             }
         }
@@ -2749,7 +2882,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         addOrientedBox(mesh,buildingPoint.x,buildingPoint.y+height+0.15f,
                                        buildingPoint.z,width+0.35f,0.30f,depth+0.35f,
                                        buildingPoint.yaw,Color(76,82,83,255));
-                    ++staticWorldDistantSettlementBuildings_;
+                    ++counters.staticWorldDistantSettlementBuildings_;
                 }
             }
         }
@@ -2784,7 +2917,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                 if (!clear) continue;
                 const auto placement=localRoutePoint(route,anchorDistance,pocket->distance,pocket->lateral);
                 addStreetPocket(mesh,pocketSurface,placement.yaw,side);
-                ++staticWorldUrbanStreetPockets_;
+                ++counters.staticWorldUrbanStreetPockets_;
             }
 
         if (pose.urbanity>0.45 && !pose.tunnel && !pose.bridge)
@@ -3021,7 +3154,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                 Vector3{edge+0.20f,0.82f*scale,halfLength-0.42f},
                                 foliage,placement);
                 }
-                ++staticWorldUrbanResidentialPlotSurfaces_;
+                ++counters.staticWorldUrbanResidentialPlotSurfaces_;
                 if (const auto link=World::frontageLink(chunk.features,feature))
                 {
                     // Shared service passage joins paired parcels; its footprint is also
@@ -3123,7 +3256,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                 addOrientedBox(mesh,threshold.x,path.y+0.115f,threshold.z,
                                0.42f*scale,0.15f,1.24f*scale,threshold.yaw,
                                Color(133,132,124,255));
-                ++staticWorldUrbanResidentialEntrancePaths_;
+                ++counters.staticWorldUrbanResidentialEntrancePaths_;
             };
             switch (feature.kind)
             {
@@ -3245,7 +3378,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                        point.z+std::cos(yaw)*strap*scale,
                                        2.24f*scale,0.055f*scale,0.065f*scale,yaw,
                                        Color(88,78,55,255));
-                    ++staticWorldHayBaleStacks_;
+                    ++counters.staticWorldHayBaleStacks_;
                     break;
                 }
                 case World::FeatureKind::Tree:
@@ -3266,7 +3399,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         highlightPalette[feature.variant%highlightPalette.size()];
                     if (feature.variant == 0U || feature.variant == 3U)
                     {
-                        staticWorldConiferBranchTiers_ += addLayeredConifer(
+                        counters.staticWorldConiferBranchTiers_ += addLayeredConifer(
                             (!distant && graphicsQuality_>=1) ? needleMaterial : mesh,
                             Vector3{point.x,point.y,point.z},scale,sides,
                             treeShapeSeed(feature.routeDistance,feature.lateralMetres,feature.variant),
@@ -3297,7 +3430,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                 mesh.addBox(Vector3{-0.5f,0.0f,-0.5f},
                                             Vector3{0.5f,1.0f,0.5f},
                                             Color(87,66,44,255),branchTransform);
-                                ++staticWorldTreeBranchCues_;
+                                ++counters.staticWorldTreeBranchCues_;
                             }
                         }
                         if (!distant && graphicsQuality_ >= 1)
@@ -3410,7 +3543,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                 ++placed;
                             }
                         }
-                        if (placed > 0) ++staticWorldUnderstoreyGroups_;
+                        if (placed > 0) ++counters.staticWorldUnderstoreyGroups_;
                     }
                     break;
                 }
@@ -3738,7 +3871,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                     endWindow,
                                     (6.1f+static_cast<float>(floor)*2.65f)*scale,
                                     0.98f*scale,1.05f*scale);
-                                ++staticWorldTowerEndWallWindows_;
+                                ++counters.staticWorldTowerEndWallWindows_;
                             }
                         }
                         for (double lateralOffset : {-2.25,2.25})
@@ -3752,7 +3885,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                             addEndWallWindow(
                                 upperWindow,(6.55f+unscaledBodyHeight)*scale,
                                 1.02f*scale,1.08f*scale);
-                            ++staticWorldTowerEndWallWindows_;
+                            ++counters.staticWorldTowerEndWallWindows_;
                         }
                     }
                     const LocalRoutePoint roofPlant = localRoutePoint(
@@ -3921,7 +4054,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                                 0.43f*scale},
                                         7,3,Color(72,124,59,255));
                             }
-                            ++staticWorldIndustrialEdgePlantingGroups_;
+                            ++counters.staticWorldIndustrialEdgePlantingGroups_;
                         }
 
                         const double parkingLateral = innerYardLateral
@@ -4016,7 +4149,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                            0.06f,0.20f*scale,0.28f*scale,lamp.yaw,
                                            Color(244,225,160,255));
                         }
-                        ++staticWorldIndustrialYardVehicles_;
+                        ++counters.staticWorldIndustrialYardVehicles_;
 
                         if ((feature.variant&World::kWarehouseThreeBuildingCompound) != 0U)
                         {
@@ -4070,7 +4203,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                                    0.34f*scale,vanWheel.yaw,
                                                    Color(27,30,30,255));
                                 }
-                            ++staticWorldIndustrialYardVehicles_;
+                            ++counters.staticWorldIndustrialYardVehicles_;
 
                             // A detached box trailer occupies a second loading bay. Its rear-door
                             // ribs, tandem axle and landing legs make the larger compound feel in
@@ -4121,10 +4254,10 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                                0.18f*scale,0.88f*scale,0.18f*scale,
                                                leg.yaw,Color(70,75,74,255));
                             }
-                            ++staticWorldIndustrialYardVehicles_;
-                            ++staticWorldIndustrialTrailers_;
+                            ++counters.staticWorldIndustrialYardVehicles_;
+                            ++counters.staticWorldIndustrialTrailers_;
                         }
-                        ++staticWorldIndustrialCompounds_;
+                        ++counters.staticWorldIndustrialCompounds_;
                     }
                     addOrientedBox(mesh, point.x,point.y+4.2f*scale,point.z,
                                    17.0f*scale,8.4f*scale,22.0f*scale,point.yaw,
@@ -4304,8 +4437,8 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                          0.67f*scale,0.18f*scale,8,
                                          Color(72,81,82,255));
                     }
-                    ++staticWorldIndustrialUtilityGroups_;
-                    ++staticWorldDetailedWarehouses_;
+                    ++counters.staticWorldIndustrialUtilityGroups_;
+                    ++counters.staticWorldDetailedWarehouses_;
                     break;
                 }
                 case World::FeatureKind::Farmstead:
@@ -4644,8 +4777,8 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     addOrientedBox(mesh,insulator.x,insulator.y+6.22f,insulator.z,
                                    0.13f,0.055f,0.13f,insulator.yaw,
                                    Color(139,164,158,255));
-                    ++staticWorldCatenaryRegistrationAssemblies_;
-                    ++staticWorldCatenaryFoundations_;
+                    ++counters.staticWorldCatenaryRegistrationAssemblies_;
+                    ++counters.staticWorldCatenaryFoundations_;
                     break;
                 }
                 case World::FeatureKind::PowerPylon:
@@ -4851,10 +4984,10 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     addBufferStop(mesh,terminalPoint,
                                   station.distanceMetres-inward*kTerminalBufferOffset,
                                   trackLateral,inward);
-                    ++staticWorldTerminalBufferStops_;
+                    ++counters.staticWorldTerminalBufferStops_;
                 }
                 addTerminusHeadHouse(mesh,terminalPoint,station.distanceMetres,inward,pairLateral);
-                staticWorldTerminalShedColumns_ += addTrainShed(
+                counters.staticWorldTerminalShedColumns_ += addTrainShed(
                     mesh,terminalPoint,station.distanceMetres,inward,pairLateral);
                 {
                     std::string headHouseName = station.name;
@@ -5083,7 +5216,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
             }
 
             if (graphicsQuality_>=1)
-                staticWorldPlatformSurfaceJoints_+=addPlatformPaving(platformMaterial,
+                counters.staticWorldPlatformSurfaceJoints_+=addPlatformPaving(platformMaterial,
                     Matrix::CreateRotationY(platform.yaw)*Matrix::CreateTranslation(
                         platform.x,platform.y+kPlatformSurfaceElevation,platform.z),
                     platformLength,static_cast<float>(side),platformSurface);
@@ -5104,7 +5237,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                 addOrientedBox(mesh,joint.x,
                                joint.y+kPlatformSurfaceElevation+0.005f,joint.z,
                                4.56f,0.006f,0.030f,joint.yaw,Color(143,145,140,255));
-                ++staticWorldPlatformSurfaceJoints_;
+                ++counters.staticWorldPlatformSurfaceJoints_;
             }
             for (double across : {1.35,2.75,4.15})
             {
@@ -5115,7 +5248,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                joint.y+kPlatformSurfaceElevation+0.005f,joint.z,
                                0.030f,0.006f,platformLength-2.0f,joint.yaw,
                                Color(143,145,140,255));
-                ++staticWorldPlatformSurfaceJoints_;
+                ++counters.staticWorldPlatformSurfaceJoints_;
             }
 
             }
@@ -5142,7 +5275,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         0.32f+static_cast<float>(variant)*0.13f,
                         1.05f+static_cast<float>((variant+mark)%3)*0.48f,
                         stain.yaw,Color(48,55,53,12+variant*2));
-                    ++staticWorldPlatformWeatheringMarks_;
+                    ++counters.staticWorldPlatformWeatheringMarks_;
                 }
             }
             const LocalRoutePoint canopy = localRoutePoint(
@@ -5203,7 +5336,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                shoe.y+kPlatformSurfaceElevation+0.055f,shoe.z,
                                0.62f,0.09f,0.12f,shoe.yaw,Color(50,61,62,255));
             }
-            ++staticWorldPlatformCanopyDrainageAssemblies_;
+            ++counters.staticWorldPlatformCanopyDrainageAssemblies_;
             const int canopyLightCount = std::max(
                 3,static_cast<int>(std::floor(canopyLength/18.0f)));
             for (int light = 0; light < canopyLightCount; ++light)
@@ -5213,7 +5346,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     route,anchorDistance,station.distanceMetres+offset,side*5.0);
                 addCanopyLuminaire(mesh,worldLuminaires,Matrix::CreateRotationY(panel.yaw)
                     *Matrix::CreateTranslation(panel.x,panel.y,panel.z));
-                ++staticWorldPlatformCanopyLights_;
+                ++counters.staticWorldPlatformCanopyLights_;
             }
             for (double nominal = -canopyLength * 0.42; nominal <= canopyLength * 0.42;
                  nominal += canopySupportSpacing)
@@ -5346,7 +5479,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                    mark.yaw,
                                    weatheredFacadeColors[stationIndex
                                        % weatheredFacadeColors.size()]);
-                    ++staticWorldStationFacadeWeatheringStreaks_;
+                    ++counters.staticWorldStationFacadeWeatheringStreaks_;
                 }
             }
 
@@ -5432,7 +5565,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         waterMaterial,water.x,water.y-0.125f,water.z,
                         band == 2 ? 20.0f : 16.2f,250.0f,water.yaw,7.5f,
                         waterfrontColours[band]);
-                    ++staticWorldStationWaterfrontSections_;
+                    ++counters.staticWorldStationWaterfrontSections_;
                 }
                 const LocalRoutePoint promenade = localRoutePoint(
                     route, anchorDistance, station.distanceMetres, side * 13.0);
@@ -5541,7 +5674,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                         groundShadows,bench.x,
                         bench.y+kPlatformSurfaceElevation+0.018f,bench.z,
                         0.92f,2.72f,bench.yaw,Color(8,12,13,26));
-                ++staticWorldPlatformBenchAssemblies_;
+                ++counters.staticWorldPlatformBenchAssemblies_;
             }
             const LocalRoutePoint ticket = localRoutePoint(
                 route, anchorDistance, station.distanceMetres + 7.0, side * 4.5);
@@ -5578,7 +5711,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                posterFace.y+kPlatformSurfaceElevation+2.09f,posterFace.z,
                                0.040f,0.14f,0.91f,posterFace.yaw,
                                Color(235,232,211,255));
-                ++staticWorldPlatformPosterCases_;
+                ++counters.staticWorldPlatformPosterCases_;
             }
 
             const int cabinetCount = station.major ? 2 : 1;
@@ -5607,7 +5740,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                                cabinetFace.y+kPlatformSurfaceElevation+1.27f,
                                cabinetFace.z,0.042f,0.30f,0.30f,cabinetFace.yaw,
                                Color(229,190,48,255));
-                ++staticWorldPlatformEquipmentCabinets_;
+                ++counters.staticWorldPlatformEquipmentCabinets_;
             }
 
             if (station.major)
@@ -5640,7 +5773,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                             8,4,shrubOffset < 0.0 ? Color(55,105,61,255)
                                                   : Color(63,116,68,255));
                     }
-                    ++staticWorldPlatformPlanters_;
+                    ++counters.staticWorldPlatformPlanters_;
                 }
             }
 
@@ -5689,7 +5822,7 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
                     for (float height : {0.42f,1.16f})
                         addOrientedBox(mesh,rail.x,rail.y+kPlatformSurfaceElevation+height,rail.z,
                             0.075f,0.070f,static_cast<float>(step),rail.yaw,Color(83,92,90,255));
-                    ++staticWorldPlatformBoundarySections_;
+                    ++counters.staticWorldPlatformBoundarySections_;
                 }
             }
             if (rural || suburban)
@@ -5795,45 +5928,10 @@ void SceneRenderer::rebuildStaticWorld(const Sim::Route& route,
         }
     }
 
-    const auto uploadStart = std::chrono::steady_clock::now();
-    routePointCacheHits_ += routePointCache.hits();
-    routePointCacheMisses_ += routePointCache.misses();
-    const double generationMs = std::chrono::duration<double,std::milli>(
-        uploadStart-generationStart).count();
-    worldGenerationTotalMs_ += generationMs;
-    worldGenerationMaxMs_ = std::max(worldGenerationMaxMs_,generationMs);
-    const auto uploadStreamed = [this](std::unique_ptr<GpuMesh>& target,const MeshData& data) {
-        if (data.empty()) target.reset();
-        else if (target) worldBufferReuses_ += static_cast<std::uint64_t>(target->replace(device_,data));
-        else target=std::make_unique<GpuMesh>(device_,data,true);
-    };
-    uploadStreamed(terrain_,terrain.data());
-    uploadStreamed(foliageMaterial_,foliageMaterial.data());
-    uploadStreamed(needleMaterial_,needleMaterial.data());
-    uploadStreamed(leafSprays_,leafSprays.data());
-    uploadStreamed(needleSprays_,needleSprays.data());
-    uploadStreamed(roofMaterial_,roofMaterial.data());
-    MeshData waterMaterialData = waterMaterial.take();
-    uploadStreamed(waterMaterial_,waterMaterialData);
-    MeshData facadeMaterialData = facadeMaterial.take();
-    uploadStreamed(facadeMaterial_,facadeMaterialData);
-    MeshData renderedFacadeMaterialData = renderedFacadeMaterial.take();
-    uploadStreamed(renderedFacadeMaterial_,renderedFacadeMaterialData);
-    uploadStreamed(staticWorld_,mesh.data());
-    uploadStreamed(stationLettering_,stationLettering.data());
-    MeshData shadowData = groundShadows.take();
-    uploadStreamed(staticWorldShadows_,shadowData);
-    MeshData platformMaterialData = platformMaterial.take();
-    uploadStreamed(platformMaterial_,platformMaterialData);
-    MeshData luminaireData = worldLuminaires.take();
-    uploadStreamed(worldLuminaires_,luminaireData);
-    worldAnchorDistance_ = anchorDistance;
-    worldAnchorChunk_ = world.currentChunk();
-    // CPU-side buffer creation/submission only. Deferred GPU execution belongs to draw/present.
-    const double uploadMs = std::chrono::duration<double,std::milli>(
-        std::chrono::steady_clock::now()-uploadStart).count();
-    worldUploadTotalMs_ += uploadMs;
-    worldUploadMaxMs_ = std::max(worldUploadMaxMs_,uploadMs);
+    cacheHits = routePointCache.hits();
+    cacheMisses = routePointCache.misses();
+    generationMs = std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-generationStart).count();
 }
 
 void SceneRenderer::addNextAvatarVisual()
@@ -8313,21 +8411,10 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     materialEffect_->DirectionalLight0.setDiffuseColorProperty(outdoorLight.diffuse);
     materialEffect_->setFogColorProperty(atmosphericFog);
 
-    // Terrain, vegetation, architecture, stations and fixed railway furniture are rebuilt once
-    // per streamed chunk transition and submitted as one vertex-coloured batch.
-    const double requestedWorldAnchor = std::clamp(
-        (static_cast<double>(world.currentChunk()) + 0.5) * world.chunkLength(),
-        0.0, route.lengthMetres());
-    if (!staticWorld_ || world.currentChunk() != worldAnchorChunk_)
-    {
-        const auto begin = std::chrono::steady_clock::now();
-        rebuildStaticWorld(route, world, requestedWorldAnchor);
-        const double milliseconds = std::chrono::duration<double,std::milli>(
-            std::chrono::steady_clock::now()-begin).count();
-        ++worldRebuilds_;
-        worldRebuildTotalMs_ += milliseconds;
-        worldRebuildMaxMs_ = std::max(worldRebuildMaxMs_,milliseconds);
-    }
+    updateStaticWorld(route, world, service);
+    stats.worldPrefetchHits = worldStreaming_->prefetchHits;
+    stats.worldSynchronousBuilds = worldStreaming_->synchronousBuilds;
+    stats.worldLatePrefetches = worldStreaming_->latePrefetches;
     stats.worldRebuilds = worldRebuilds_;
     stats.worldBufferReuses = worldBufferReuses_;
     stats.routePointCacheHits = routePointCacheHits_;
@@ -8516,63 +8603,63 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     }
     drawMesh(*staticWorld_, worldPlacement, view, projection, stats);
     drawPrintedText(stationLettering_,worldPlacement);
-    stats.lakesideWaterPatches = staticWorldLakePatches_;
-    stats.lakesideBankTrees = staticWorldLakeBankTrees_;
-    stats.hayBaleStacks = staticWorldHayBaleStacks_;
-    stats.riverWaterSections = staticWorldRiverWaterSections_;
-    stats.riverBankClumps = staticWorldRiverBankClumps_;
-    stats.stationWaterfrontSections = staticWorldStationWaterfrontSections_;
-    stats.catenaryDroppers = staticWorldCatenaryDroppers_;
-    stats.catenaryFoundations = staticWorldCatenaryFoundations_;
-    stats.catenaryMessengerSegments = staticWorldCatenaryMessengerSegments_;
-    stats.catenaryRegistrationAssemblies = staticWorldCatenaryRegistrationAssemblies_;
-    stats.linesideEquipmentCabinets = staticWorldLinesideEquipmentCabinets_;
-    stats.tunnelLuminaires = staticWorldTunnelLuminaires_;
-    stats.tunnelSafetyNiches = staticWorldTunnelSafetyNiches_;
-    stats.tunnelLiningRings = staticWorldTunnelLiningRings_;
-    stats.tunnelMarkerPlates = staticWorldTunnelMarkerPlates_;
-    stats.bridgeSections = staticWorldBridgeSections_;
-    stats.riverBridgeSections = staticWorldRiverBridgeSections_;
-    stats.viaductSections = staticWorldViaductSections_;
-    stats.bridgeAbutments = staticWorldBridgeAbutments_;
-    stats.terminalBufferStops = staticWorldTerminalBufferStops_;
-    stats.terminalShedColumns = staticWorldTerminalShedColumns_;
-    stats.bridgeParapetPosts = staticWorldBridgeParapetPosts_;
-    stats.fencePosts = staticWorldFencePosts_;
-    stats.platformSurfaceJoints = staticWorldPlatformSurfaceJoints_;
-    stats.platformCanopyLights = staticWorldPlatformCanopyLights_;
+    stats.lakesideWaterPatches = worldCounters_.staticWorldLakePatches_;
+    stats.lakesideBankTrees = worldCounters_.staticWorldLakeBankTrees_;
+    stats.hayBaleStacks = worldCounters_.staticWorldHayBaleStacks_;
+    stats.riverWaterSections = worldCounters_.staticWorldRiverWaterSections_;
+    stats.riverBankClumps = worldCounters_.staticWorldRiverBankClumps_;
+    stats.stationWaterfrontSections = worldCounters_.staticWorldStationWaterfrontSections_;
+    stats.catenaryDroppers = worldCounters_.staticWorldCatenaryDroppers_;
+    stats.catenaryFoundations = worldCounters_.staticWorldCatenaryFoundations_;
+    stats.catenaryMessengerSegments = worldCounters_.staticWorldCatenaryMessengerSegments_;
+    stats.catenaryRegistrationAssemblies = worldCounters_.staticWorldCatenaryRegistrationAssemblies_;
+    stats.linesideEquipmentCabinets = worldCounters_.staticWorldLinesideEquipmentCabinets_;
+    stats.tunnelLuminaires = worldCounters_.staticWorldTunnelLuminaires_;
+    stats.tunnelSafetyNiches = worldCounters_.staticWorldTunnelSafetyNiches_;
+    stats.tunnelLiningRings = worldCounters_.staticWorldTunnelLiningRings_;
+    stats.tunnelMarkerPlates = worldCounters_.staticWorldTunnelMarkerPlates_;
+    stats.bridgeSections = worldCounters_.staticWorldBridgeSections_;
+    stats.riverBridgeSections = worldCounters_.staticWorldRiverBridgeSections_;
+    stats.viaductSections = worldCounters_.staticWorldViaductSections_;
+    stats.bridgeAbutments = worldCounters_.staticWorldBridgeAbutments_;
+    stats.terminalBufferStops = worldCounters_.staticWorldTerminalBufferStops_;
+    stats.terminalShedColumns = worldCounters_.staticWorldTerminalShedColumns_;
+    stats.bridgeParapetPosts = worldCounters_.staticWorldBridgeParapetPosts_;
+    stats.fencePosts = worldCounters_.staticWorldFencePosts_;
+    stats.platformSurfaceJoints = worldCounters_.staticWorldPlatformSurfaceJoints_;
+    stats.platformCanopyLights = worldCounters_.staticWorldPlatformCanopyLights_;
     stats.platformCanopyDrainageAssemblies =
-        staticWorldPlatformCanopyDrainageAssemblies_;
-    stats.platformPlanters = staticWorldPlatformPlanters_;
-    stats.platformPosterCases = staticWorldPlatformPosterCases_;
-    stats.platformEquipmentCabinets = staticWorldPlatformEquipmentCabinets_;
-    stats.platformBenchAssemblies = staticWorldPlatformBenchAssemblies_;
-    stats.platformWeatheringMarks = staticWorldPlatformWeatheringMarks_;
+        worldCounters_.staticWorldPlatformCanopyDrainageAssemblies_;
+    stats.platformPlanters = worldCounters_.staticWorldPlatformPlanters_;
+    stats.platformPosterCases = worldCounters_.staticWorldPlatformPosterCases_;
+    stats.platformEquipmentCabinets = worldCounters_.staticWorldPlatformEquipmentCabinets_;
+    stats.platformBenchAssemblies = worldCounters_.staticWorldPlatformBenchAssemblies_;
+    stats.platformWeatheringMarks = worldCounters_.staticWorldPlatformWeatheringMarks_;
     stats.stationFacadeWeatheringStreaks =
-        staticWorldStationFacadeWeatheringStreaks_;
-    stats.platformBoundarySections = staticWorldPlatformBoundarySections_;
-    stats.tracksideDrainageSections = staticWorldTracksideDrainageSections_;
-    stats.tracksideVergeTufts = staticWorldTracksideVergeTufts_;
-    stats.fieldBoundarySegments = staticWorldFieldBoundarySegments_;
-    stats.distantWoodlandTrees = staticWorldDistantWoodlandTrees_;
-    stats.distantRidgeMasses = staticWorldDistantRidgeMasses_;
-    stats.treeBranchCues = staticWorldTreeBranchCues_;
-    stats.coniferBranchTiers = staticWorldConiferBranchTiers_;
-    stats.understoreyGroups = staticWorldUnderstoreyGroups_;
-    stats.distantSettlementBuildings = staticWorldDistantSettlementBuildings_;
-    stats.buildingEndWallWindows = staticWorldBuildingEndWallWindows_;
-    stats.towerEndWallWindows = staticWorldTowerEndWallWindows_;
-    stats.detailedWarehouses = staticWorldDetailedWarehouses_;
-    stats.industrialCompounds = staticWorldIndustrialCompounds_;
-    stats.industrialYardVehicles = staticWorldIndustrialYardVehicles_;
-    stats.industrialTrailers = staticWorldIndustrialTrailers_;
-    stats.industrialUtilityGroups = staticWorldIndustrialUtilityGroups_;
-    stats.industrialEdgePlantingGroups = staticWorldIndustrialEdgePlantingGroups_;
-    stats.urbanRoadEdgeMarkingSections = staticWorldUrbanRoadEdgeMarkingSections_;
-    stats.urbanRoadDrainGrates = staticWorldUrbanRoadDrainGrates_;
-    stats.urbanResidentialPlotSurfaces = staticWorldUrbanResidentialPlotSurfaces_;
-    stats.urbanStreetPockets = staticWorldUrbanStreetPockets_;
-    stats.urbanResidentialEntrancePaths = staticWorldUrbanResidentialEntrancePaths_;
+        worldCounters_.staticWorldStationFacadeWeatheringStreaks_;
+    stats.platformBoundarySections = worldCounters_.staticWorldPlatformBoundarySections_;
+    stats.tracksideDrainageSections = worldCounters_.staticWorldTracksideDrainageSections_;
+    stats.tracksideVergeTufts = worldCounters_.staticWorldTracksideVergeTufts_;
+    stats.fieldBoundarySegments = worldCounters_.staticWorldFieldBoundarySegments_;
+    stats.distantWoodlandTrees = worldCounters_.staticWorldDistantWoodlandTrees_;
+    stats.distantRidgeMasses = worldCounters_.staticWorldDistantRidgeMasses_;
+    stats.treeBranchCues = worldCounters_.staticWorldTreeBranchCues_;
+    stats.coniferBranchTiers = worldCounters_.staticWorldConiferBranchTiers_;
+    stats.understoreyGroups = worldCounters_.staticWorldUnderstoreyGroups_;
+    stats.distantSettlementBuildings = worldCounters_.staticWorldDistantSettlementBuildings_;
+    stats.buildingEndWallWindows = worldCounters_.staticWorldBuildingEndWallWindows_;
+    stats.towerEndWallWindows = worldCounters_.staticWorldTowerEndWallWindows_;
+    stats.detailedWarehouses = worldCounters_.staticWorldDetailedWarehouses_;
+    stats.industrialCompounds = worldCounters_.staticWorldIndustrialCompounds_;
+    stats.industrialYardVehicles = worldCounters_.staticWorldIndustrialYardVehicles_;
+    stats.industrialTrailers = worldCounters_.staticWorldIndustrialTrailers_;
+    stats.industrialUtilityGroups = worldCounters_.staticWorldIndustrialUtilityGroups_;
+    stats.industrialEdgePlantingGroups = worldCounters_.staticWorldIndustrialEdgePlantingGroups_;
+    stats.urbanRoadEdgeMarkingSections = worldCounters_.staticWorldUrbanRoadEdgeMarkingSections_;
+    stats.urbanRoadDrainGrates = worldCounters_.staticWorldUrbanRoadDrainGrates_;
+    stats.urbanResidentialPlotSurfaces = worldCounters_.staticWorldUrbanResidentialPlotSurfaces_;
+    stats.urbanStreetPockets = worldCounters_.staticWorldUrbanStreetPockets_;
+    stats.urbanResidentialEntrancePaths = worldCounters_.staticWorldUrbanResidentialEntrancePaths_;
     if (worldLuminaires_)
     {
         effect_->setLightingEnabledProperty(false);

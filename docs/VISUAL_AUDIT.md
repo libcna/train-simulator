@@ -2063,3 +2063,12 @@ performance run coincided with a host load spike, 447 ms rebuild, and is not
 used above). Whole suite on the final binary **67/67, 119.27 s**; unit tests
 **176/176**. Prefix: `terminal-composition-`. ENV-120 is addressed; no ranked
 finding remains open.
+
+## Post-campaign streaming verification (2026-10-11)
+
+The closed ENV findings remain unchanged. [PERF-001](STREAMING.md) records the
+subsequent asynchronous world-preparation repair, moving GPU timing and matched
+`streaming-static` engine captures. This is an engineering audit item rather
+than a new visual-defect ID; the geometry equivalence tests compare every
+material vertex/index and all geometry counters across route types and quality
+levels. The inspected seated-window pair retains the completed visual repairs.

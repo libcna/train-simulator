@@ -69,6 +69,7 @@ public:
     void update(double trainDistanceMetres);
     [[nodiscard]] const std::vector<Chunk>& chunks() const noexcept { return chunks_; }
     [[nodiscard]] std::int64_t currentChunk() const noexcept { return currentChunk_; }
+    [[nodiscard]] int radius() const noexcept { return radius_; }
     [[nodiscard]] double chunkLength() const noexcept { return chunkLength_; }
     [[nodiscard]] std::size_t generatedChunkCount() const noexcept { return generatedChunkCount_; }
     [[nodiscard]] double requiredLevelCrossingClosure(

@@ -71,3 +71,16 @@ Open items outside the ranked list remain: synchronous streaming hitches, the
 reported intermittent physical-mouse freeze and the absence of an hours-long
 stability run. The campaign's terminal condition (verified closure of every
 listed finding) is met; it is not a claim of photographic realism.
+
+## Engineering continuation, 2026-10-11
+
+The owner resumed work and requested continuous audits and improvements after the agreed work.
+The next engineering item, periodic synchronous scenery rebuilding, now prepares CPU geometry
+on a worker and stages GPU materials before each boundary. See [PERF-001](STREAMING.md) for
+matched capture evidence, measured p99, regression coverage and remaining limits. This does not
+reopen any closed ENV finding. Physical-mouse reproduction and hours-long stability remain open.
+
+The owner subsequently narrowed the 2026-10-11 goal to the estimated 4–6 hours of
+agreed work: streaming, extended input/interactions and multi-hour stability/memory
+validation, including necessary fixes. **No further audit loop is authorised
+after those items.** The preceding indefinite-loop instruction is superseded.

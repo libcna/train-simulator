@@ -496,6 +496,9 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " steady_frame_p95_ms=" << steadyTiming.p95Ms
                   << " steady_frame_p99_ms=" << steadyTiming.p99Ms
                   << " steady_frame_max_ms=" << steadyTiming.windowMaxMs
+                  << " world_prefetch_hits=" << renderStats_.worldPrefetchHits
+                  << " world_synchronous_builds=" << renderStats_.worldSynchronousBuilds
+                  << " world_late_prefetches=" << renderStats_.worldLatePrefetches
                   << " world_rebuilds=" << renderStats_.worldRebuilds
                   << " world_buffer_reuses=" << renderStats_.worldBufferReuses
                   << " route_point_cache_hits=" << renderStats_.routePointCacheHits

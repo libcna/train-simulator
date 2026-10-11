@@ -365,6 +365,17 @@ if(TRAINSIM_BUILD_TESTS)
             PASS_REGULAR_EXPRESSION
                 "route_km=247\\.600 direction=-1 phase=DWELLING.*exchange_started=4"
             TIMEOUT 30)
+        foreach(stream_direction IN ITEMS -1 1)
+            add_test(NAME trainsim_world_prefetch_${stream_direction}
+                COMMAND train-simulator --run-seconds 8 --route-km 52 --direction ${stream_direction}
+                        --time-scale 4 --quality 0 --no-audio --no-avatars --report-state
+                        --config "${CMAKE_BINARY_DIR}/runtime-asset-smoke/world-prefetch-${stream_direction}.cfg")
+            set_tests_properties(trainsim_world_prefetch_${stream_direction} PROPERTIES
+                ENVIRONMENT "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy"
+                PASS_REGULAR_EXPRESSION
+                    "world_prefetch_hits=[1-9][0-9]* world_synchronous_builds=1"
+                TIMEOUT 45)
+        endforeach()
         add_test(NAME trainsim_terminal_reversal_smoke
             # The station exchange intentionally uses real-time doorway traversal, so retain
             # ten simulation-update seconds for all four actors, independently of render

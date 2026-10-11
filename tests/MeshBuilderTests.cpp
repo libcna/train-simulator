@@ -1,4 +1,6 @@
 #include "TestHarness.hpp"
+#include "trainsim/render/WorldGeometry.hpp"
+#include <future>
 #include "trainsim/render/Daylight.hpp"
 #include "trainsim/render/SkyGeometry.hpp"
 #include "trainsim/render/AvatarProportions.hpp"
@@ -3948,5 +3950,59 @@ TEST_CASE("terminus kit closes the tracks beyond the platform with stops shed an
         REQUIRE(vertex.position.Y >= 0.78f);
         REQUIRE(vertex.position.X >= 19.0f);
         REQUIRE(vertex.position.X <= 26.0f);
+    }
+}
+
+TEST_CASE("world prefetch selection respects both terminal directions")
+{
+    using TrainSim::Render::nextWorldChunk;
+    REQUIRE(nextWorldChunk(208,1,286400,250)==209);
+    REQUIRE(nextWorldChunk(208,-1,286400,250)==207);
+    REQUIRE(nextWorldChunk(0,-1,286400,250)==0);
+    REQUIRE(nextWorldChunk(0,1,286400,250)==1);
+    REQUIRE(nextWorldChunk(1145,1,286400,250)==1145);
+    REQUIRE(nextWorldChunk(1145,-1,286400,250)==1144);
+    REQUIRE(nextWorldChunk(0,1,100,250)==0);
+}
+
+TEST_CASE("worker world snapshots match retained chunks and clear old material geometry")
+{
+    using namespace TrainSim;
+    const auto route = Sim::Route::NorthernValleyExpress();
+    World::StreamingWorld retained(route);
+    Render::WorldGeometry foreground;
+    // Reuse both builders over countryside, stations, tunnel, viaduct and both ends.
+    // Every vertex/index must match a separately owned worker route/world snapshot.
+    auto scratch = std::make_unique<Render::WorldGeometry>();
+    for (const auto& [distance,quality] : std::array<std::pair<double,int>,7>{
+            {{52000,2},{52250,2},{68490,1},{123000,2},{178000,0},{286400,2},{0,2}}})
+    {
+        retained.update(distance);
+        const double anchor=std::clamp((static_cast<double>(retained.currentChunk())+0.5)
+                                      *retained.chunkLength(),0.0,route.lengthMetres());
+        auto worker=std::async(std::launch::async,
+            [copy=route,geometry=std::move(scratch),anchor,quality]() mutable {
+                World::StreamingWorld snapshot(copy);
+                snapshot.update(anchor);
+                geometry->build(copy,snapshot,anchor,quality,750);
+                return std::move(geometry);
+            });
+        foreground.build(route,retained,anchor,quality,750);
+        scratch=worker.get();
+        for (std::size_t material=0; material<Render::kWorldMaterialCount; ++material)
+        {
+            const auto& actual=scratch->meshes[material].data();
+            const auto& expected=foreground.meshes[material].data();
+            REQUIRE(actual.indices==expected.indices);
+            REQUIRE(actual.vertices.size()==expected.vertices.size());
+            for (std::size_t i=0; i<actual.vertices.size(); ++i)
+            {
+                REQUIRE(actual.vertices[i].position==expected.vertices[i].position);
+                REQUIRE(actual.vertices[i].normal==expected.vertices[i].normal);
+                REQUIRE(actual.vertices[i].textureCoordinate==expected.vertices[i].textureCoordinate);
+                REQUIRE(actual.vertices[i].color==expected.vertices[i].color);
+            }
+        }
+        REQUIRE(scratch->counters==foreground.counters);
     }
 }

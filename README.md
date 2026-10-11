@@ -179,7 +179,9 @@ output rather than external art assets and may be refreshed as the procedural ar
   direction-correct white or red marker lights.
   Moving consists complete a continuous 1.9 km pass before an out-of-view reset, and both their
   spatial audio and geometry follow the same widened parallel alignment through island stations.
-  Static scenery is batched per chunk transition.
+  Static scenery is prepared on a CPU worker ahead of each chunk transition, uploaded one
+  material per frame and published as one complete window. Initial loads and discontinuous
+  changes retain a synchronous fallback; see [streaming evidence](docs/STREAMING.md).
 - A deterministic mipmapped material palette adds fine non-repeating tonal structure to terrain,
   track ballast, polished rail heads, station concrete, lake/estuary water, carriage carpet, seat
   upholstery, resilient vestibule/WC flooring, and close passenger-wall and ceiling panels.
@@ -265,17 +267,18 @@ and other renderers are deliberately out of scope.
 ## Build and run
 
 ```bash
+export CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv
 cmake -S . -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 cmake --build build --parallel 4
-ctest --test-dir build --output-on-failure -j4
+env LP_NUM_THREADS=4 ctest --test-dir build --output-on-failure --parallel 1
 ./build/train-simulator
 ```
 
 The system `ccache` executable is mandatory and CMake rejects a different compiler launcher;
-its normal per-user cache location is sufficient. Never raise build parallelism above four. The
+use the shared `CCACHE_DIR=/rv/cnaccache` with `CCACHE_BASEDIR=/rv`. Never raise build parallelism above four. The
 repository uses one incremental `build/` tree and copies its small runtime asset set beside the
 executable.
 

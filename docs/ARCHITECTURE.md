@@ -410,25 +410,27 @@ The separate `steady_frame_*` window only records intervals whose endpoints are 
 not proof that shader compilation or every resource upload has finished. Normal world rebuilds
 and station transitions remain in that window; they are not filtered out as outliers.
 
-Static-world generation retains one CPU `MeshBuilder` staging buffer for the largest opaque
-world batch. Each rebuild clears its sizes while preserving vector capacity, and `GpuMesh`
-uploads its data before the next reuse. This removes repeated growth/copy/free churn without
-changing GPU ownership, mesh contents or chunk residency. Retained capacity follows the largest
-world window seen during the session; it is not a cache of historical world meshes. Other small
-material builders and the synchronous full-window regeneration remain unchanged.
+Static-world generation is CPU-only `WorldGeometry` output: fourteen material builders plus
+geometry counters. One asynchronous job owns a route copy and a deterministic `StreamingWorld`
+snapshot for the next chunk in the service direction. Its builders retain capacity. The render
+thread polls completion and uploads at most one non-empty material per frame into a second GPU
+window, skipping empty slots without wasting frames; all meshes,
+anchor and counters swap together at the requested boundary. Two GPU windows and one CPU window
+bound residency independently of journey duration. No worker accesses CNA graphics resources,
+avatar state or live simulation data. Renderer destruction joins the independently owned job.
 
-Streamed world batches use `GpuMesh`'s dynamic mode. A replacement reuses each CNA vertex/index
-buffer independently when its exact element count matches, and replaces that buffer when the
-count changes. Uploads cover the entire buffer with `SetDataOptions::Discard`; there is no spare
-capacity, partial-update suffix, or historical GPU mesh cache. Empty material batches release
-their mesh. Static train/prop meshes retain the original immutable path. `world_buffer_reuses`
-counts reused CNA buffer objects (vertex and index separately), not driver allocation events:
-the renderer may still rename/orphan backing storage for Discard. The terminal-reversal smoke
-test also requires this counter to become nonzero after streaming transitions.
+Initial loads, teleports, setting changes and missed predictions have an immediate complete-scene
+fallback. Reversal rejects an obsolete prediction. Existing exact-size dynamic Discard uploads
+still reuse matching buffer objects independently, and empty materials release their staging mesh.
+Static train/prop meshes remain immutable. `world_buffer_reuses` counts CNA objects, not driver
+allocations. New preparation-hit, synchronous-build and late-preparation counters expose whether
+the fallback actually occurs. See [the streaming audit](STREAMING.md) for evidence and limits.
 
-World rebuild diagnostics split CPU geometry production (`world_generation_*_ms`) from CPU-side
-buffer creation/submission (`world_upload_*_ms`). Neither measures deferred GPU completion.
-The outer rebuild timer also includes local cleanup, so component totals need not equal it exactly.
+`world_rebuild_*_ms` now measures render-thread streaming work, including staged uploads and
+fallback waits, across all frames. `world_generation_*_ms` measures completed CPU generation,
+usually on the worker. `world_upload_total_ms` counts submissions, while `world_upload_max_ms`
+is now a single material submission rather than the old whole-window upload. None measures
+GPU completion. Generation can include a prepared window that is not yet visible.
 `Route::relativePose` samples only shared curve/elevation functions, avoiding station-influence
 and environmental metadata that it never returns. Full `Route::sample` remains authoritative for
 urbanity, water, tunnels, bridges and curvature; endpoint tangent extrapolation is preserved.

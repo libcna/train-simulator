@@ -5,6 +5,7 @@
 #include "trainsim/sim/RouteSimulation.hpp"
 #include "trainsim/sim/TrainInterior.hpp"
 #include "trainsim/world/StreamingWorld.hpp"
+#include "trainsim/render/WorldGeometry.hpp"
 
 #include "Microsoft/Xna/Framework/Color.hpp"
 #include "Microsoft/Xna/Framework/Matrix.hpp"
@@ -39,6 +40,9 @@ struct RenderStats
     int facadeShaderDraws = 0;
     int waterShaderDraws = 0;
     int culledOnboardAvatars = 0;
+    std::uint64_t worldPrefetchHits = 0;
+    std::uint64_t worldSynchronousBuilds = 0;
+    std::uint64_t worldLatePrefetches = 0;
     std::uint64_t worldRebuilds = 0;
     std::uint64_t worldBufferReuses = 0;
     std::uint64_t routePointCacheHits = 0;
@@ -206,8 +210,8 @@ public:
 private:
     void buildInterior();
     void rebuildTrack(const Sim::Route& route, double anchorDistance);
-    void rebuildStaticWorld(const Sim::Route& route, const World::StreamingWorld& world,
-                            double anchorDistance);
+    void updateStaticWorld(const Sim::Route& route, const World::StreamingWorld& world,
+                           const Sim::ServiceState& service);
     void rebuildInformationDisplays(const Sim::Route& route, const Sim::ServiceState& service,
                                     int speedKilometresPerHour, int etaMinutes,
                                     int informationPage);
@@ -309,9 +313,6 @@ private:
     std::unique_ptr<GpuMesh> roofMaterial_;
     std::unique_ptr<GpuMesh> waterMaterial_;
     std::unique_ptr<GpuMesh> staticWorld_;
-    std::unique_ptr<MeshBuilder> worldMeshScratch_;
-    std::unique_ptr<MeshBuilder> foliageMeshScratch_;
-    std::unique_ptr<MeshBuilder> needleMeshScratch_;
     std::unique_ptr<GpuMesh> facadeMaterial_;
     std::unique_ptr<GpuMesh> renderedFacadeMaterial_;
     std::unique_ptr<GpuMesh> staticWorldShadows_;
@@ -367,65 +368,13 @@ private:
     double trackAnchorDistance_ = -1.0;
     double worldAnchorDistance_ = -1.0;
     std::int64_t worldAnchorChunk_ = -1;
-    int staticWorldLakePatches_ = 0;
-    int staticWorldLakeBankTrees_ = 0;
-    int staticWorldHayBaleStacks_ = 0;
-    int staticWorldRiverWaterSections_ = 0;
-    int staticWorldRiverBankClumps_ = 0;
-    int staticWorldStationWaterfrontSections_ = 0;
+    struct WorldStreamingState;
+    std::unique_ptr<WorldStreamingState> worldStreaming_;
+    WorldGeometryCounters worldCounters_;
     int tracksideKilometrePosts_ = 0;
     int trackFastenerAssemblies_ = 0;
     int trackTurnoutPointMotors_ = 0;
     int trackTurnoutBladeAssemblies_ = 0;
-    int staticWorldCatenaryDroppers_ = 0;
-    int staticWorldCatenaryFoundations_ = 0;
-    int staticWorldCatenaryMessengerSegments_ = 0;
-    int staticWorldCatenaryRegistrationAssemblies_ = 0;
-    int staticWorldLinesideEquipmentCabinets_ = 0;
-    int staticWorldTunnelLuminaires_ = 0;
-    int staticWorldTunnelSafetyNiches_ = 0;
-    int staticWorldTunnelLiningRings_ = 0;
-    int staticWorldTunnelMarkerPlates_ = 0;
-    int staticWorldBridgeSections_ = 0;
-    int staticWorldRiverBridgeSections_ = 0;
-    int staticWorldViaductSections_ = 0;
-    int staticWorldBridgeAbutments_ = 0;
-    int staticWorldTerminalBufferStops_ = 0;
-    int staticWorldTerminalShedColumns_ = 0;
-    int staticWorldBridgeParapetPosts_ = 0;
-    int staticWorldFencePosts_ = 0;
-    int staticWorldPlatformSurfaceJoints_ = 0;
-    int staticWorldPlatformCanopyLights_ = 0;
-    int staticWorldPlatformCanopyDrainageAssemblies_ = 0;
-    int staticWorldPlatformPlanters_ = 0;
-    int staticWorldPlatformPosterCases_ = 0;
-    int staticWorldPlatformEquipmentCabinets_ = 0;
-    int staticWorldPlatformBenchAssemblies_ = 0;
-    int staticWorldPlatformWeatheringMarks_ = 0;
-    int staticWorldStationFacadeWeatheringStreaks_ = 0;
-    int staticWorldPlatformBoundarySections_ = 0;
-    int staticWorldTracksideDrainageSections_ = 0;
-    int staticWorldTracksideVergeTufts_ = 0;
-    int staticWorldFieldBoundarySegments_ = 0;
-    int staticWorldDistantWoodlandTrees_ = 0;
-    int staticWorldDistantRidgeMasses_ = 0;
-    int staticWorldTreeBranchCues_ = 0;
-    int staticWorldConiferBranchTiers_ = 0;
-    int staticWorldUnderstoreyGroups_ = 0;
-    int staticWorldDistantSettlementBuildings_ = 0;
-    int staticWorldBuildingEndWallWindows_ = 0;
-    int staticWorldTowerEndWallWindows_ = 0;
-    int staticWorldDetailedWarehouses_ = 0;
-    int staticWorldIndustrialCompounds_ = 0;
-    int staticWorldIndustrialYardVehicles_ = 0;
-    int staticWorldIndustrialTrailers_ = 0;
-    int staticWorldIndustrialUtilityGroups_ = 0;
-    int staticWorldIndustrialEdgePlantingGroups_ = 0;
-    int staticWorldUrbanRoadEdgeMarkingSections_ = 0;
-    int staticWorldUrbanRoadDrainGrates_ = 0;
-    int staticWorldUrbanResidentialPlotSurfaces_ = 0;
-    int staticWorldUrbanStreetPockets_ = 0;
-    int staticWorldUrbanResidentialEntrancePaths_ = 0;
     int skyCloudBillboardCount_ = 0;
     int paSpeakerGrilleCount_ = 0;
     int hvacVentCount_ = 0;

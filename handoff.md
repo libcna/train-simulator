@@ -1,7 +1,7 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-10 (end of the second continuous visual session).
-Repository: `libcna/train-simulator`, branch `main`. Written for the next agent
+Updated: 2026-10-11 (streaming engineering continuation).
+Repository: `libcna/train-simulator`, current branch `develop`. Written for the next agent
 (expected: Codex, "astra high") starting from a fresh context.
 
 ## Owner instructions so far
@@ -15,6 +15,18 @@ Repository: `libcna/train-simulator`, branch `main`. Written for the next agent
   handoff, commit, push and stop. **Do not continue work on your own; wait for
   the owner's next instruction.** The owner manages the application goal; never
   create or change goals implicitly.
+- 2026-10-11: the owner resumed from this handoff, then explicitly requested
+  implementation of the agreed work followed by an indefinite loop of fresh
+  Train Simulator audits, proposed improvements and implementation. The earlier
+  stop instruction is superseded. Continue useful work without asking between
+  groups. The owner still manages the application goal; do not mark this ongoing
+  goal complete merely because one engineering item is finished.
+- Later on 2026-10-11 the owner narrowed the goal to the work estimated at
+  roughly 4–6 hours: finish streaming and its validation; perform a long
+  keyboard/mouse, six-car/interactions check and fix reproduced issues; run a
+  multi-hour stability/memory test, evaluate it and fix discovered failures.
+  **Do not start further audits or add unrelated improvements after those items.**
+  This supersedes the indefinite audit loop requested earlier the same day.
 - The owner's conversation is Czech; all repository content, commit messages
   and this document are English.
 
@@ -31,7 +43,7 @@ automated runs with `--frames`, `--run-seconds`, `--screenshot` or
 `--interaction-smoke` skip it.
 
 Read, in this order: `README.md`, `docs/ARCHITECTURE.md`, `docs/VISUAL_AUDIT.md`,
-`docs/VISUAL_CAMPAIGN.md`, `docs/AUDIT.md`, `bugs.md`. Automated tests do not
+`docs/VISUAL_CAMPAIGN.md`, `docs/AUDIT.md`, `bugs.md`, then `docs/STREAMING.md`. Automated tests do not
 prove realism; only inspected engine screenshots do.
 
 ## Non-negotiable constraints
@@ -60,9 +72,9 @@ prove realism; only inspected engine screenshots do.
 ```bash
 export CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv
 cmake --build build --parallel 4                 # incremental; already configured
-./build/trainsim_render_tests                    # 176 render/geometry unit tests
+./build/trainsim_render_tests                    # 178 render/geometry unit tests
 ./build/trainsim_tests                           # 124 simulation unit tests
-env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure   # 67 tests, ~2 min
+env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure   # 69 tests; shared-host duration varies
 ./build/train-simulator                          # interactive play (start menu)
 ```
 
@@ -138,11 +150,20 @@ adding reusable geometry in headers rather than inline.
 
 ## Known open issues (outside the ranked list)
 
-1. **Synchronous streaming hitches.** Initial world rebuilds measure
-   100–450 ms depending on location and host load (viaduct ~145 ms, terminal
-   ~170 ms, up to 447 ms under heavy host load). The earlier 1,800-frame moving
-   soak had p99 106 ms. Staged/cached generation without CNA edits is the next
-   engineering item; see `docs/VISUAL_CAMPAIGN.md`.
+1. **Streaming follow-up.** CPU-only `WorldGeometry` preparation now runs on one
+   worker, with a route copy and a separate deterministic world snapshot. The
+   render thread stages at most one non-empty material per frame into a second
+   GPU window; meshes, counters and anchor swap together at the boundary. Empty
+   slots are skipped immediately (new software-rendering smokes caught wasted
+   frames here). Startup, teleport, settings changes and late predictions use a
+   complete-scene synchronous fallback. See `docs/STREAMING.md` (PERF-001) for
+   evidence, telemetry semantics and reproduction. Final moving
+   evidence reduced p99 from 173.4 to 26.9 ms with 45 ready swaps and no late
+   predictions; the avatar-enabled ride measured p99 27.1 ms with 18 ready
+   visuals and the same 45 ready swaps. Final verification is recorded below.
+   Remaining risks are large
+   individual uploads, separate track rebuilds, heavy-load missed deadlines and
+   the extra GPU window's memory footprint; do not claim every hitch is gone.
 2. **Intermittent physical-mouse camera freeze** reported by the owner; not
    reproduced by automated runs. Needs a genuinely long keyboard/mouse play
    test across all six cars, seating, toilet and doors when authorised.
@@ -155,14 +176,29 @@ adding reusable geometry in headers rather than inline.
    listed defects and need a new screenshot-based ranking if the owner wants
    another pass.
 
-## Final verification at this handoff
+## Current continuation verification
 
-- Working tree committed on `main` and pushed; verify with `git log -1` and
-  `git status -sb` rather than trusting this document.
-- Last whole CTest run on the final binary: **67/67 passed, 119.27 s**
-  (`build/visual-audit/terminal-composition-full-tests.log`). Render unit tests
-  176/176, simulation unit tests 124/124.
-- Last inspected engine images: `terminal-composition-*-after.png` plus a
-  head-house lettering probe confirming the station names read correctly at
-  both termini.
-- CNA and sharp-runtime working trees were not modified by this project.
+The original 2026-10-10 checkpoint was commit `41cbc1d`, 67/67 CTests,
+176 render tests and 124 simulation tests. The resumed checkout was clean on
+`develop`, pointing to the same commit as `main`; the continuation stays on
+`develop` rather than moving the owner's branch.
+
+The streaming continuation adds `WorldGeometry.hpp`, preparation telemetry,
+full vertex/index/counter equivalence tests, two directional prefetch smokes,
+`tools/capture_streaming.sh` and `tools/test_world_prefetch_input.sh`. Its exact
+results are in `docs/STREAMING.md` and `build/visual-audit/streaming-*`.
+
+Final streaming build: **69/69 CTests passed, 339.49 s**; render/geometry
+**178/178**, simulation **124/124**. The private settings/teleport input probe
+passed with 12 synchronous loads and no late preparation. Matched static captures,
+1,800-frame no-avatar and 1,800-frame populated GPU rides were inspected. Peak RSS
+was about 844 MiB without avatars and 996 MiB with avatars in those short runs;
+these are not long-term leak results. CNA `2b15506a4` and sharp-runtime `c20373ba`
+were clean and untouched by this project.
+
+Next work after the streaming group: the agreed extended input/interactions test
+and multi-hour stability/memory run, with fixes for reproduced problems. Native
+injected X11 events do not certify the owner's physical mouse; report the exact
+scope and any unreproduced issue honestly. Do not start a new visual audit or
+other additional work. Dependencies remain read-only. Verify commits and worktree
+state with `git log -1` / `git status -sb`; do not rely on this document alone.
