@@ -1,6 +1,6 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-11 (input repairs verified; long stability run pending).
+Updated: 2026-10-11 (finite streaming/input/stability scope completed).
 Repository: `libcna/train-simulator`, current branch `develop`. Written for the next agent
 (expected: Codex, "astra high") starting from a fresh context.
 
@@ -170,7 +170,13 @@ adding reusable geometry in headers rather than inline.
    deadlocks and an NPC reservation race during player toilet entry. See
    `docs/STABILITY.md` for exact component results and harness limits. Injected
    events cannot certify the owner's physical mouse; do not claim its issue fixed.
-3. **No hours-long stability/leak run** exists. Do not claim one.
+3. **Multi-hour resource validation completed.** The uninterrupted 2.5-hour
+   populated journey passed with 24 station legs, both terminal reversals,
+   2,470 prepared swaps and zero late preparations. Process RSS showed no
+   sustained growth; its final-quarter median was 933.8 MiB and kernel peak
+   1,210.3 MiB. Threads, file descriptors and populations stayed bounded. See
+   `docs/STABILITY.md`; this finite result is not a proof of leak freedom or a
+   separate GPU-memory measurement.
 4. Several frame-time comparisons on 2026-10-10 were distorted by host load
    from other agents (documented per section). Re-measure on a quiet host before
    treating any p95/p99 shift as a regression.
@@ -200,14 +206,26 @@ these are not long-term leak results. CNA `2b15506a4` and sharp-runtime `c20373b
 were clean and untouched by this project.
 
 The streaming group is committed and pushed as `9ccf390` to `origin/develop`;
-the owner explicitly approved that destination. Input work now has 128/128 passing
+the owner explicitly approved that commit and destination. The input repairs and
+resource-test helpers are committed and pushed as `fdb2941`, also with the owner's
+explicit approval for that commit. Input work now has 128/128 passing
 simulation tests and 178/178 render tests. The final full CTest run passed 68/69;
 the gallery validator timed out at 15 s, then passed alone in 4.17 s. Both receipts
 are retained; do not describe that as a single clean full-suite pass.
-The 20-second stability-helper smoke passed; the 2.5-hour resource journey and
-its evaluation remain required before the finite goal is complete. Current tools:
+The 20-second stability-helper smoke and the full 2.5-hour resource journey
+passed. The latter completed normally in 9,001.817 wall seconds, preserving 901
+resource samples, 1,796 application traces and an inspected final screenshot.
+Its exact resource analysis and limitations are in `docs/STABILITY.md`. The
+tested binary SHA-256 is
+`071285233baafd7dbeada5f34c5e01d057323c15074172afad55a7c819bc4457`.
+Current tools:
 `tools/test_native_walk.py` (zero rounds isolates interactions),
 `tools/run_stability_soak.py` and the extended `tools/test_x11_input.sh`.
-Do not start a new visual audit or other additional work. Dependencies remain
+The first `stability-long-*` attempt was cut off by a host restart at about
+50 minutes, with no final result. Preserve it as incomplete evidence. The
+replacement `stability-restart-*` run completed the full 9,000 seconds and its
+summary reports success. No test process needs to be resumed or restarted.
+The finite engineering and verification scope is complete. Do not start a new
+visual audit or other additional work. Dependencies remain
 read-only. Verify commits and worktree state with `git log -1` / `git status -sb`;
 do not rely on this document alone.

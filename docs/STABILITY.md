@@ -162,4 +162,72 @@ gallery-PNG validator exceeded its 15 s timeout; its isolated rerun passed in
 
 The helper smoke (`stability-smoke-*`) completed normally in 23.614 wall seconds
 for a requested 20-second journey, yielding twelve process-resource samples and
-a saved screenshot. The hours-long resource run is still pending.
+a saved screenshot. The completed hours-long resource run is recorded below.
+
+The initial `stability-long-*` attempt was interrupted by a host restart after
+3,000 seconds of sampled wall time. On resuming, its tool handle was gone, the
+host had only about four minutes of uptime, and a host-level process check
+confirmed that neither the game nor its Python runner survived. Its last trace
+was at 2,997.89 application seconds, with 814 prepared swaps and zero late
+predictions. There is no final state, exit receipt or screenshot; this is an
+incomplete run, not a passing long test or evidence of an application crash.
+The original files are preserved. A fresh uninterrupted 9,000-second attempt
+uses the distinct `stability-restart-*` prefix.
+
+### Uninterrupted populated resource journey — passed
+
+The replacement run completed **9,000 requested application seconds in
+9,001.817 wall seconds (2 h 30 min 1.817 s)**, with normal process exit and all
+helper invariants passing. It used High quality, 18 avatar visuals and enabled
+audio through SDL's dummy output. Evidence is under `build/visual-audit/`:
+`stability-restart-{manifest,summary,analysis}.json`,
+`stability-restart-samples.jsonl`, `stability-restart-game.log`,
+`stability-restart-runner.log` and `stability-restart-final.png`.
+
+The executable SHA-256 remained
+`071285233baafd7dbeada5f34c5e01d057323c15074172afad55a7c819bc4457`,
+recorded against commit `fdb2941`. No build or other heavy test ran alongside it.
+The final screenshot was inspected: the populated carriage, landscape and HUD
+remained rendered. Both dependency checkouts were still clean at CNA
+`2b15506a4` and sharp-runtime `c20373ba`.
+
+- The train completed 24 station legs, reversed at both termini and began a
+  third traversal, finishing at km 45.052 in the original direction. This covers
+  approximately 617.9 km of simulated travel, including repeated route sections.
+- All **2,470 boundary swaps** used prepared scenery; there was one initial
+  synchronous build and **zero late preparations** throughout the trace.
+- There were 901 process-resource samples and 1,796 application traces. The
+  longest periodic trace interval was 5.04263 s. Seven chunks and 38 passengers
+  remained bounded throughout. After the initial frame-zero trace, every trace
+  had all 18 avatar visuals ready, including the final state.
+- Steady sampled thread counts stayed at 21–22 (the preparation worker is
+  temporary), and file descriptors stayed at 10. Playing audio instances stayed
+  at 12–14, with zero paused instances.
+- The kernel RSS high-water mark was **1,210.3 MiB**; the largest ten-second RSS
+  sample was 1,185.1 MiB. The last sample was **940.2 MiB**. The final quarter's
+  median was **933.8 MiB**, with a range of 844.0–1,147.5 MiB.
+
+| Wall-time interval | Median process RSS |
+| --- | ---: |
+| 0–30 min | 952.7 MiB |
+| 30–60 min | 947.9 MiB |
+| 60–90 min | 963.0 MiB |
+| 90–120 min | 941.1 MiB |
+| 120–150 min | 933.0 MiB |
+
+The final traversal repeated km 0–40 in the original direction. Median RSS in
+the 10–20, 20–30 and 30–40 km bins decreased from 954.5/976.1/970.5 MiB on the
+first visit to 936.9/932.2/951.9 MiB on the repeat. The startup-containing 0–10 km
+bin was higher on the repeat (890.4 → 971.8 MiB); the later bins and time blocks
+did not continue that increase. This finite scenario shows bounded resource use
+and no sustained RSS growth. It does not prove that every allocation is freed,
+measure GPU memory separately or establish leak freedom for other scenarios.
+
+Final rolling frame p99 was 28.5 ms over 2,048 samples. The whole-run maximum
+frame interval was 309.0 ms, including startup: zero late scenery preparations
+is not a claim that every frame hitch is eliminated. Audio used dummy output,
+and this unattended journey does not resolve the unconfirmed physical-mouse
+report. No new application failure requiring a repair was found in this run.
+
+The agreed streaming, extended input/interactions and multi-hour resource checks
+are complete. No further audit campaign is part of this scope.

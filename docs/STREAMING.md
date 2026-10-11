@@ -123,5 +123,6 @@ also passed.
   with the previous whole-window maximum.
 
 The original periodic full-window stall is addressed in this measured corridor.
-Keep monitoring other route types, avatars and longer journeys; this is not an
-hours-long stability certification or a claim that every possible hitch is gone.
+The subsequent populated 2.5-hour journey in [STABILITY.md](STABILITY.md)
+completed 2,470 prepared swaps and both terminal reversals with zero late
+preparations. Neither result claims that every possible frame hitch is gone.
