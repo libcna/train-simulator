@@ -137,6 +137,80 @@ TEST_CASE("an aisle actor yields sideways to a nearby player and restores its la
     REQUIRE(passengers.invariantsHold());
 }
 
+TEST_CASE("opposing aisle actors clear a player's passing lane without overlapping")
+{
+    for (std::size_t actorCount : {2U,6U})
+    {
+        for (double playerX : {-0.32,0.0,0.32})
+        {
+            PassengerSystem passengers(42,6,actorCount);
+            // Reproduce the native-walk blocker: two stationary bodies abreast at the
+            // display bay. Mutate only this non-const fixture, preserving seat ownership.
+            auto& actors = const_cast<std::vector<Passenger>&>(passengers.passengers());
+            auto& seats = const_cast<std::vector<Seat>&>(passengers.seats());
+            for (std::size_t i = 0; i < actorCount; ++i)
+            {
+                seats[*actors[i].seat].occupant.reset();
+                actors[i].seat.reset();
+                actors[i].state = PassengerState::Standing;
+                actors[i].activityRemaining = 1'000.0;
+                actors[i].x = i % 2 == 0 ? -0.39 : 0.39;
+                actors[i].z = 10.50-0.625*static_cast<double>(i/2)-(i%2 == 0 ? 0.0 : 0.033);
+                actors[i].car = 3;
+            }
+            for (int step = 0; step < 200; ++step)
+            {
+                passengers.update(0.05,false,false,1.0,1,true,playerX,11.3);
+                for (std::size_t i = 0; i < actorCount; ++i)
+                    for (std::size_t j = i+1; j < actorCount; ++j)
+                        REQUIRE(std::hypot(actors[i].x-actors[j].x,actors[i].z-actors[j].z) >= 0.51);
+                for (std::size_t i = 0; i < actorCount; ++i)
+                {
+                    REQUIRE(TrainInterior::canOccupy(actors[i].x,actors[i].z,false));
+                    REQUIRE(std::hypot(actors[i].x-playerX,actors[i].z-11.3) >= 0.48);
+                }
+            }
+            // A centred player also needs a clear side to take before passing.
+            const double passingX = playerX == 0.0 ? 0.32 : playerX;
+            double playerZ = 11.3;
+            for (int step = 0; step < 400 && playerZ > 9.1; ++step)
+            {
+                passengers.update(0.05,false,false,1.0,1,true,passingX,playerZ);
+                const double candidateZ = std::max(9.1,playerZ-1.75*0.05);
+                bool clear = TrainInterior::canOccupy(passingX,candidateZ,false);
+                for (const auto& actor : actors)
+                {
+                    if (actor.seat.has_value() || actor.state == PassengerState::Offboard
+                        || actor.role == PassengerRole::Driver) continue;
+                    if (std::hypot(actor.x-passingX,actor.z-candidateZ) < 0.48) clear = false;
+                }
+                if (clear) playerZ = candidateZ;
+            }
+            if (playerZ > 9.1)
+                std::cerr << "Blocked yield fixture: count=" << actorCount
+                          << " player_x=" << playerX << " player_z=" << playerZ << '\n';
+            REQUIRE(playerZ <= 9.1);
+            REQUIRE(passengers.invariantsHold());
+        }
+    }
+}
+
+TEST_CASE("an actor yielding beside the toilet remains outside its side wall")
+{
+    PassengerSystem passengers(42,6,0);
+    auto& actors = const_cast<std::vector<Passenger>&>(passengers.passengers());
+    auto& conductor = actors[passengers.conductorIndex()];
+    conductor.x = -0.28;
+    conductor.z = 6.0;
+    conductor.car = 3;
+    conductor.activityRemaining = 1'000.0;
+    for (int step = 0; step < 30; ++step)
+    {
+        passengers.update(0.05,false,false,1.0,1,true,-0.32,7.0);
+        REQUIRE(TrainInterior::canOccupy(conductor.x,conductor.z,false));
+    }
+}
+
 TEST_CASE("unseated onboard actors retain visible body separation")
 {
     PassengerSystem passengers(0x5E9A2A7EULL, 6, 48);
@@ -615,6 +689,28 @@ TEST_CASE("passenger completes an exclusive toilet visit")
     REQUIRE(sawDoorRequest);
     REQUIRE(sawOccupied);
     REQUIRE(sawVisitFinish);
+    REQUIRE(passengers.invariantsHold());
+}
+
+TEST_CASE("NPCs cannot reserve an opened toilet during player entry but can after departure")
+{
+    PassengerSystem passengers(0xA11CEULL,6,34);
+    for (int step = 0; step < 20'000; ++step)
+    {
+        const double x = step % 2 == 0 ? -0.95 : 0.64;
+        const double z = step % 2 == 0 ? 4.1 : 4.537;
+        passengers.update(0.1,false,false,1.0,1,
+            TrainInterior::toiletAvailableToPassengers(x,z,true),x,z);
+        REQUIRE(!passengers.toiletReserved());
+    }
+    bool reservedAfterDeparture = false;
+    for (int step = 0; step < 20'000 && !reservedAfterDeparture; ++step)
+    {
+        passengers.update(0.1,false,false,1.0,1,
+            TrainInterior::toiletAvailableToPassengers(0.0,1.5,true),0.0,1.5);
+        reservedAfterDeparture = passengers.toiletReserved();
+    }
+    REQUIRE(reservedAfterDeparture);
     REQUIRE(passengers.invariantsHold());
 }
 

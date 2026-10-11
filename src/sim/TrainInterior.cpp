@@ -6,6 +6,13 @@
 
 namespace TrainSim::Sim {
 
+bool TrainInterior::toiletAvailableToPassengers(
+    double playerX, double playerZ, bool playerDoorOpen) noexcept
+{
+    if (insideToilet(playerX,playerZ)) return false;
+    return !playerDoorOpen || std::hypot(playerX-0.34,playerZ-4.1) > 1.8;
+}
+
 std::optional<int> TrainInterior::informationDisplayCar(double z, double radius) noexcept
 {
     if (!std::isfinite(z) || !std::isfinite(radius) || radius < 0.0) return std::nullopt;

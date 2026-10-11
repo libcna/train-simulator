@@ -1068,6 +1068,15 @@ without paying for hidden faces. Collision uses explicit passenger-space dimensi
 instead of deriving physics from rendering geometry. Seats, display
 inspection, sitting/standing, and the accessible toilet door share one distance-based context
 interaction path. Player seat reservations use the same authoritative occupancy system as NPCs.
+Extended native walking exposed opposing actors that could block each other's yield. Nearby
+actors now choose a consistent side for a centred player, notice the player across a 2.5 m
+seating bay, and retain the manoeuvre until 3 m away. A blocked sideways move can become a
+clearance-checked longitudinal retreat; the toilet wall also forces a retreat when no usable
+opposite side exists. Interior bounds, body separation and car identity remain authoritative.
+Opening the toilet gives a player within 1.8 m of its entrance priority over new NPC
+reservations. Being inside retains that priority; closing outside or walking away releases it.
+An existing NPC reservation still blocks the opening interaction. Regression and native-input
+evidence, including unsuccessful harness iterations, is recorded in [STABILITY.md](STABILITY.md).
 Display inspection remains live rather than pausing simulation and expands the physical display
 state into a twelve-stop route diagram with passed/upcoming markers, continuous train position,
 direction, speed, ETA, following calls, and schedule status. `--inspect-display` exposes the same

@@ -124,6 +124,11 @@ public:
         return x > 0.44 && x < 1.18 && z > 4.55 && z < 7.72;
     }
 
+    // An open player-operated door gives a nearby player time to enter/leave;
+    // walking away releases this priority even if the door remains open.
+    [[nodiscard]] static bool toiletAvailableToPassengers(
+        double playerX, double playerZ, bool playerDoorOpen) noexcept;
+
     [[nodiscard]] static std::optional<int>
     informationDisplayCar(double z, double radius = 0.65) noexcept;
     [[nodiscard]] static bool gangwaySensorContains(int index, double z) noexcept;

@@ -172,6 +172,16 @@ TEST_CASE("toilet is reachable only through its open doorway")
     REQUIRE(!TrainInterior::insideToilet(0.66, 4.20));
 }
 
+TEST_CASE("opening the toilet protects nearby entry and releases priority when walking away")
+{
+    REQUIRE(TrainInterior::toiletAvailableToPassengers(-0.95,4.1,false));
+    REQUIRE(!TrainInterior::toiletAvailableToPassengers(-0.95,4.1,true));
+    REQUIRE(!TrainInterior::toiletAvailableToPassengers(0.64,4.537,true));
+    REQUIRE(!TrainInterior::toiletAvailableToPassengers(0.66,5.70,false));
+    REQUIRE(!TrainInterior::toiletAvailableToPassengers(0.66,5.70,true));
+    REQUIRE(TrainInterior::toiletAvailableToPassengers(0.0,1.5,true));
+}
+
 TEST_CASE("accessible rows preserve additional aisle-side floor space")
 {
     constexpr double accessibleRowZ = TrainInterior::seatRowZ(2, 0);

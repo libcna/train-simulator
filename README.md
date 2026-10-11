@@ -348,6 +348,9 @@ window focus, native/project mouse capture, all look-blocking overlay states, cu
 look-motion samples, view angles, player position, drawn-frame count and the actual wall-time
 interval since the previous trace (zero for the first record). An interval much longer than five
 seconds exposes a stalled update loop instead of silently resembling missing mouse motion.
+The trace also records route progress, direction, completed station legs, retained world and
+avatar populations, streaming readiness, audio instance counts, recent frame p99 and interaction
+state. Frame p99 covers the most recent 2,048 measured frames, not the whole journey.
 It does not record typed text. Note approximately when the
 problem occurred and retain the log; F12 exits if input still responds. These diagnostics do not
 claim to fix the reported intermittent freeze. The optional isolated X11 probe and its limits
@@ -357,6 +360,8 @@ For an isolated GPU-backed Xwayland probe, use
 This requires the sibling CNA private Weston runner and does not operate your desktop. Check
 `build/x11-input-test/renderer.txt` for actual acceleration; synthetic events still cannot certify
 the physical-mouse issue.
+Extended native input, six-car interactions and process-memory runs are described in
+[Long-running validation](docs/STABILITY.md).
 
 `--no-vsync` is a diagnostic presentation override. It keeps the normal 60 Hz simulation target
 and all quality settings, does not alter saved preferences, and may cause tearing. Compare it

@@ -26,18 +26,22 @@ else
     command -v Xvfb >/dev/null
 fi
 for program in xdotool xmessage timeout import awk; do command -v "$program" >/dev/null; done
+output=${INPUT_PROBE_OUTPUT:-build/x11-input-test}
+[[ "$output" =~ ^build/[a-zA-Z0-9_/-]+$ ]] || {
+    echo 'INPUT_PROBE_OUTPUT must be a relative build/ evidence directory.' >&2; exit 2;
+}
 phases=${INPUT_PROBE_PHASES:-3}
 avatars=${INPUT_PROBE_AVATARS:-0}
-if [[ ! "$phases" =~ ^([3-9]|1[0-8])$ || ! "$avatars" =~ ^[01]$ ]]; then
-    echo 'INPUT_PROBE_PHASES must be 3–18; INPUT_PROBE_AVATARS must be 0 or 1.' >&2
+if [[ ! "$phases" =~ ^([3-9]|[1-9][0-9]|1[0-7][0-9]|180)$ || ! "$avatars" =~ ^[01]$ ]]; then
+    echo 'INPUT_PROBE_PHASES must be 3–180; INPUT_PROBE_AVATARS must be 0 or 1.' >&2
     exit 2
 fi
 avatar_args=(--no-avatars)
 if ((avatars)); then avatar_args=(); fi
 probe_dir=$(mktemp -d /tmp/train-simulator-x11.XXXXXX)
-mkdir -p build/x11-input-test
+mkdir -p "${output}"
 printf 'status=running phases=%s avatars=%s backend=%s quality=%s\n' \
-    "$phases" "$avatars" "$backend" "$quality" >build/x11-input-test/result.txt
+    "$phases" "$avatars" "$backend" "$quality" >"${output}"/result.txt
 xserver_pid=
 simulator_pid=
 focus_pid=
@@ -50,7 +54,7 @@ cleanup() {
     rm -f "$probe_dir/display" "$probe_dir/xvfb.log" "$probe_dir/settings.cfg"
     rmdir "$probe_dir" 2>/dev/null || true
     printf 'exit_status=%s phases=%s avatars=%s backend=%s quality=%s\n' \
-        "$probe_status" "$phases" "$avatars" "$backend" "$quality" >build/x11-input-test/result.txt
+        "$probe_status" "$phases" "$avatars" "$backend" "$quality" >"${output}"/result.txt
 }
 trap cleanup EXIT
 if [[ "$backend" == xvfb ]]; then
@@ -66,12 +70,12 @@ display_number=$(<"$probe_dir/display")
 export DISPLAY=":$display_number"
 fi
 if command -v glxinfo >/dev/null; then
-    glxinfo -B >build/x11-input-test/renderer.txt 2>&1
+    glxinfo -B >"${output}"/renderer.txt 2>&1
 fi
 export SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy LP_NUM_THREADS=4
 unset WAYLAND_DISPLAY
 timeout "$((60+phases*30))" ./build/train-simulator --window-view --route-km 52 --quality "$quality" --no-audio \
-    "${avatar_args[@]}" --report-state --config "$probe_dir/settings.cfg" >build/x11-input-test/game.log 2>&1 &
+    "${avatar_args[@]}" --report-state --config "$probe_dir/settings.cfg" >"${output}"/game.log 2>&1 &
 simulator_pid=$!
 window=
 for ((attempt=0;attempt<100;++attempt)); do
@@ -97,21 +101,24 @@ capture_mouse() {
     sleep 0.3
 }
 sleep 2
+# Interactive launches now open on the start menu. Enter uses its supported
+# keyboard action; a click at the screen centre sits above the Start button.
+press_key Return
 capture_mouse
 # Do not send a whole motion sequence to an uncaptured window and call that a look test.
 for ((attempt=0;attempt<14;++attempt)); do
-    if awk '/^INPUT_TRACE/ { captured=($0 ~ /captured=1 native=1/); } END { exit !captured; }' build/x11-input-test/game.log; then break; fi
+    if awk '/^INPUT_TRACE/ { captured=($0 ~ /captured=1 native=1/); } END { exit !captured; }' "${output}"/game.log; then break; fi
     capture_mouse
     sleep 0.5
 done
-awk '/^INPUT_TRACE/ { captured=($0 ~ /captured=1 native=1/); } END { exit !captured; }' build/x11-input-test/game.log
-import -window "$window" build/x11-input-test/before.png
+awk '/^INPUT_TRACE/ { captured=($0 ~ /captured=1 native=1/); } END { exit !captured; }' "${output}"/game.log
+import -window "$window" "${output}"/before.png
 motion_samples() {
-    awk '/^INPUT_TRACE/ { for(i=1;i<=NF;i++) if($i ~ /^motion_samples=/) { split($i,a,"="); n=a[2]; } } END { print n+0; }' build/x11-input-test/game.log
+    awk '/^INPUT_TRACE/ { for(i=1;i<=NF;i++) if($i ~ /^motion_samples=/) { split($i,a,"="); n=a[2]; } } END { print n+0; }' "${output}"/game.log
 }
 for ((phase=0;phase<phases;++phase)); do
     before_motion=$(motion_samples)
-    before_records=$(awk '/^INPUT_TRACE/ { n++ } END { print n+0 }' build/x11-input-test/game.log)
+    before_records=$(awk '/^INPUT_TRACE/ { n++ } END { print n+0 }' "${output}"/game.log)
     for ((step=0;step<200;++step)); do
         xdotool mousemove_relative -- 6 0
         sleep 0.05
@@ -138,9 +145,9 @@ for ((phase=0;phase<phases;++phase)); do
         lastYaw=yaw; lastSamples=samples;
     }
     END { if(records<1 || travel<0.5) exit 1; }
-    ' build/x11-input-test/game.log || { echo "Camera yaw did not advance in phase $phase" >&2; exit 1; }
+    ' "${output}"/game.log || { echo "Camera yaw did not advance in phase $phase" >&2; exit 1; }
     echo "INPUT_PHASE passed phase=$phase motion_before=$before_motion motion_after=$after_motion"
-    import -window "$window" "build/x11-input-test/phase-$phase.png"
+    import -window "$window" "${output}/phase-$phase.png"
     if ((phase%3 == 0)); then
         press_key Escape
         sleep 6
@@ -206,5 +213,5 @@ awk -v phases="$phases" '
     final=1;
 }
 END { if (invalidTrace || advances<phases+2 || previous<100 || !final || acquisitions<phases+1 || losses!=int(phases/3) || standing<1 || seated || rebuilds<3 || chunks!=7 || distance<500) exit 1; }
-' build/x11-input-test/game.log
+' "${output}"/game.log
 echo "X11_INPUT_PROBE passed: $phases phases, avatars=$avatars, backend=$backend, quality=$quality, per-phase camera yaw and streaming, pause/map/focus recovery; inspect captures separately."

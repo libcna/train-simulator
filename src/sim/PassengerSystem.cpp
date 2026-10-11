@@ -15,6 +15,8 @@ constexpr double kFirstCarCentre = TrainInterior::FirstCarCentre;
 constexpr double kAisleLaneX = 0.28;
 constexpr double kActorSeparation = 0.62;
 constexpr double kPassingActorSeparation = 0.52;
+constexpr double kPlayerYieldEngageDistance = 2.50;
+constexpr double kPlayerYieldReleaseDistance = 3.00;
 constexpr std::size_t kOffboardPassengerPool = 2;
 constexpr double kPassengerDoorPassageSeconds =
     TrainInterior::PassengerDoorPassageSeconds;
@@ -424,7 +426,7 @@ void PassengerSystem::update(double seconds, bool atStation, bool doorsOpen, dou
         && playerZ >= TrainInterior::PassengerMinimumZ
         && playerZ <= TrainInterior::PassengerMaximumZ;
     const auto updatePlayerYield = [this,dt,playerAboard,playerX,playerZ,
-                                    &hasActorClearance](Passenger& passenger) {
+                                    &hasActorClearance,&canAdvance](Passenger& passenger) {
         const bool aisleActor = passenger.role != PassengerRole::Driver
             && !passenger.seat.has_value()
             && passenger.state != PassengerState::Offboard
@@ -435,18 +437,43 @@ void PassengerSystem::update(double seconds, bool atStation, bool doorsOpen, dou
         const double playerDistance = playerAboard
             ? std::hypot(passenger.x-playerX,passenger.z-playerZ)
             : std::numeric_limits<double>::infinity();
-        if (aisleActor && playerDistance < 1.30)
+        // Keep a yielding actor engaged long enough to finish a short retreat
+        // around another body, instead of immediately returning to the blocked lane.
+        // Notice the player across a whole seating bay, so the back of a small
+        // queue makes room before its front actor needs to retreat into it.
+        if (aisleActor && playerDistance < (passenger.yieldingToPlayer
+                ? kPlayerYieldReleaseDistance : kPlayerYieldEngageDistance))
         {
-            // A carriage aisle is wide enough for two people only when both visibly take a side.
-            // Move away from an already-offset player; when the player is centred, retain the
-            // actor's established lane so the response never flickers between sides.
-            const double desired = std::abs(playerX) > 0.08
+            // A centred player must not be boxed between opposing pairs. Give
+            // every actor the same stable preference until the player takes a
+            // side; then yield away from that side.
+            double desired = std::abs(playerX) > 0.08
                 ? (playerX < 0.0 ? 0.39 : -0.39)
-                : (passenger.x < 0.0 ? -0.39 : 0.39);
+                : -0.39;
+            const bool constrainedByWall = !TrainInterior::canOccupy(desired,passenger.z,false);
+            if (constrainedByWall) desired = -desired;
+            const bool retreatAlongWall = constrainedByWall && desired*playerX > 0.0;
             const double candidateX = passenger.x
                 + std::clamp(desired-passenger.x,-0.72*dt,0.72*dt);
-            if (hasActorClearance(passenger,candidateX,passenger.z))
+            if (!retreatAlongWall && TrainInterior::canOccupy(candidateX,passenger.z,false)
+                && hasActorClearance(passenger,candidateX,passenger.z))
                 passenger.x = candidateX;
+            else if (retreatAlongWall || std::abs(desired-passenger.x) > 0.02)
+            {
+                // Two actors abreast cannot both slide through each other. The
+                // blocked one steps away from the player before trying sideways
+                // again. Every step retains body clearance and interior bounds.
+                const double candidateZ = passenger.z
+                    + (passenger.z < playerZ ? -1.0 : 1.0)*0.65*dt;
+                if (TrainInterior::canOccupy(passenger.x,candidateZ,false)
+                    && canAdvance(passenger,passenger.x,candidateZ))
+                {
+                    passenger.z = candidateZ;
+                    passenger.car = std::clamp(
+                        static_cast<int>((passenger.z+63.0)/kCarLength),
+                        0,TrainInterior::PassengerCars-1);
+                }
+            }
             if (!passenger.yieldingToPlayer)
             {
                 passenger.yieldingToPlayer = true;

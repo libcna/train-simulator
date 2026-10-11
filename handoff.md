@@ -1,6 +1,6 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-11 (streaming engineering continuation).
+Updated: 2026-10-11 (input repairs verified; long stability run pending).
 Repository: `libcna/train-simulator`, current branch `develop`. Written for the next agent
 (expected: Codex, "astra high") starting from a fresh context.
 
@@ -73,7 +73,7 @@ prove realism; only inspected engine screenshots do.
 export CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv
 cmake --build build --parallel 4                 # incremental; already configured
 ./build/trainsim_render_tests                    # 178 render/geometry unit tests
-./build/trainsim_tests                           # 124 simulation unit tests
+./build/trainsim_tests                           # 128 simulation unit tests
 env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure   # 69 tests; shared-host duration varies
 ./build/train-simulator                          # interactive play (start menu)
 ```
@@ -165,8 +165,11 @@ adding reusable geometry in headers rather than inline.
    individual uploads, separate track rebuilds, heavy-load missed deadlines and
    the extra GPU window's memory footprint; do not claim every hitch is gone.
 2. **Intermittent physical-mouse camera freeze** reported by the owner; not
-   reproduced by automated runs. Needs a genuinely long keyboard/mouse play
-   test across all six cars, seating, toilet and doors when authorised.
+   reproduced by the 59-minute, 180-cycle private native X11 input test. Six-car
+   walking and seating/display/toilet checks exposed and repaired crowd-yield
+   deadlocks and an NPC reservation race during player toilet entry. See
+   `docs/STABILITY.md` for exact component results and harness limits. Injected
+   events cannot certify the owner's physical mouse; do not claim its issue fixed.
 3. **No hours-long stability/leak run** exists. Do not claim one.
 4. Several frame-time comparisons on 2026-10-10 were distorted by host load
    from other agents (documented per section). Re-measure on a quiet host before
@@ -196,9 +199,15 @@ was about 844 MiB without avatars and 996 MiB with avatars in those short runs;
 these are not long-term leak results. CNA `2b15506a4` and sharp-runtime `c20373ba`
 were clean and untouched by this project.
 
-Next work after the streaming group: the agreed extended input/interactions test
-and multi-hour stability/memory run, with fixes for reproduced problems. Native
-injected X11 events do not certify the owner's physical mouse; report the exact
-scope and any unreproduced issue honestly. Do not start a new visual audit or
-other additional work. Dependencies remain read-only. Verify commits and worktree
-state with `git log -1` / `git status -sb`; do not rely on this document alone.
+The streaming group is committed and pushed as `9ccf390` to `origin/develop`;
+the owner explicitly approved that destination. Input work now has 128/128 passing
+simulation tests and 178/178 render tests. The final full CTest run passed 68/69;
+the gallery validator timed out at 15 s, then passed alone in 4.17 s. Both receipts
+are retained; do not describe that as a single clean full-suite pass.
+The 20-second stability-helper smoke passed; the 2.5-hour resource journey and
+its evaluation remain required before the finite goal is complete. Current tools:
+`tools/test_native_walk.py` (zero rounds isolates interactions),
+`tools/run_stability_soak.py` and the extended `tools/test_x11_input.sh`.
+Do not start a new visual audit or other additional work. Dependencies remain
+read-only. Verify commits and worktree state with `git log -1` / `git status -sb`;
+do not rely on this document alone.

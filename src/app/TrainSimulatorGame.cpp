@@ -1403,7 +1403,9 @@ void TrainSimulatorGame::Update(GameTime& gameTime)
             : service_.nextPlatformOnNegativeTrainX();
         passengers_.update(static_cast<double>(dt), atStation, service_.state().doorsOpen,
                            platformOnNegativeX ? -1.0 : 1.0, service_.state().direction,
-                           !playerInsideToilet(), playerX_, playerZ_, approachingStation);
+                           Sim::TrainInterior::toiletAvailableToPassengers(
+                               playerX_,playerZ_,toiletDoorOpen_),
+                           playerX_, playerZ_, approachingStation);
         if (atStation && service_.state().doorsOpen
             && passengerDoorsOpenRealSeconds_
                 >= Sim::TrainInterior::PassengerDoorPassageSeconds)
@@ -1429,6 +1431,19 @@ void TrainSimulatorGame::Update(GameTime& gameTime)
             const double traceIntervalSeconds = lastInputTrace_.time_since_epoch().count() == 0
                 ? 0.0 : std::chrono::duration<double>(now-lastInputTrace_).count();
             lastInputTrace_=now;
+            const auto steadyTiming = steadyFrameTiming_.summary();
+            std::ostringstream nearbyActors;
+            nearbyActors << std::fixed << std::setprecision(3);
+            for (std::size_t i = 0; i < passengers_.passengers().size(); ++i)
+            {
+                const auto& actor = passengers_.passengers()[i];
+                if (actor.role == Sim::PassengerRole::Driver || actor.seat.has_value()
+                    || actor.state == Sim::PassengerState::Offboard
+                    || std::hypot(actor.x-playerX_,actor.z-playerZ_) > 2.0) continue;
+                if (nearbyActors.tellp() > 0) nearbyActors << ';';
+                nearbyActors << i << ',' << actor.x << ',' << actor.z << ','
+                             << static_cast<int>(actor.state);
+            }
             std::cout << "INPUT_TRACE focus=" << getIsActiveProperty()
                       << " captured=" << mouseCaptured_
                       << " native=" << Mouse::getIsRelativeMouseModeEXTProperty()
@@ -1438,7 +1453,30 @@ void TrainSimulatorGame::Update(GameTime& gameTime)
                       << " x=" << playerX_ << " z=" << playerZ_
                       << " help=" << showHelp_ << " display=" << inspectDisplay_
                       << " frames=" << framesDrawn_
-                      << " trace_interval_s=" << traceIntervalSeconds << std::endl;
+                      << " trace_interval_s=" << traceIntervalSeconds
+                      << " elapsed_s=" << elapsedSeconds_
+                      << " route_km=" << service_.state().routeDistanceMetres/1000.0
+                      << " direction=" << service_.state().direction
+                      << " phase=" << service_.phaseName()
+                      << " station_legs=" << service_.state().completedLegs
+                      << " loaded_chunks=" << streaming_.chunks().size()
+                      << " generated_chunks=" << streaming_.generatedChunkCount()
+                      << " passengers=" << passengers_.passengers().size()
+                      << " avatar_visuals=" << renderStats_.avatarVisuals
+                      << " ready_avatar_visuals=" << renderStats_.readyAvatarVisuals
+                      << " world_rebuilds=" << renderStats_.worldRebuilds
+                      << " world_prefetch_hits=" << renderStats_.worldPrefetchHits
+                      << " world_late_prefetches=" << renderStats_.worldLatePrefetches
+                      << " audio_playing_instances=" << (audio_ ? audio_->playingInstanceCount() : 0U)
+                      << " audio_paused_instances=" << (audio_ ? audio_->pausedInstanceCount() : 0U)
+                      << " steady_frame_samples=" << steadyTiming.windowSamples
+                      << " steady_frame_p99_ms=" << steadyTiming.p99Ms
+                      << " seated=" << seated_
+                      << " toilet_door_open=" << toiletDoorOpen_
+                      << " inside_toilet=" << playerInsideToilet()
+                      << " gangway_doors=" << renderStats_.openGangwayDoors
+                      << " nearby_actors=" << (nearbyActors.str().empty() ? "none" : nearbyActors.str())
+                      << std::endl;
         }
     }
     previousKeyboard_ = keyboard;
