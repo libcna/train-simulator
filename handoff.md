@@ -1,7 +1,7 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-12 late evening (the whole goal list is implemented, documented and verified;
-**not committed or pushed** — ask the owner before committing).
+Updated: 2026-10-12 late evening (the whole goal list is implemented, documented, verified and,
+with the owner's approval, committed and pushed to `origin/develop` as `de92449`).
 Repository: `libcna/train-simulator`, current branch `develop`. Written for the next agent
 (expected: Codex, "astra high") starting from a fresh context.
 
@@ -46,8 +46,9 @@ Repository: `libcna/train-simulator`, current branch `develop`. Written for the 
 - Still on 2026-10-12 the owner said (Czech) "read handoff.md and continue". The next agent
   finished the remaining goal items (oncoming train types ENV-137, time of day ENV-138, weather
   ENV-139), the outstanding documentation for ENV-134/136 and PERF-003, formal capture scripts,
-  and repairs of defects its captures exposed. Nothing was committed; ask the owner before
-  committing or pushing, and do not start further work without a new instruction.
+  and repairs of defects its captures exposed. The owner then asked to commit and push
+  everything; that is done (`de92449` on `origin/develop`). Do not start further work without a
+  new instruction.
 - The owner's conversation is Czech; all repository content, commit messages
   and this document are English.
 
@@ -193,11 +194,10 @@ Capture scripts: `tools/capture_visual_audit_pass2.sh` (59-pose baseline, prefix
 `build/visual-audit/audit2-*`, `audit2-repairs-*`, `streaming-risk-*` and the comparison sheets
 in `build/visual-audit/audit2-sheets/`.
 
-## Goal list of 2026-10-12 evening: done, uncommitted on top of `ecd835e`
+## Goal list of 2026-10-12 evening: done, committed as `de92449`
 
-Everything below is in the working tree, builds without project warnings (the only warning is
-sharp-runtime's own `__int128` pedantic note) and passes every test. `git status` shows about 55
-changed or new files. Do not revert it; ask the owner before committing. Evidence and limits are
+Everything below builds without project warnings (the only warning is sharp-runtime's own
+`__int128` pedantic note) and passes every test. Evidence and limits are
 in `docs/VISUAL_AUDIT_2.md` ("Owner goal list") and `docs/STREAMING.md` (PERF-003).
 
 | Goal item | Where | Evidence |
@@ -275,7 +275,7 @@ Key facts for the next agent:
    a neutral detail texture; flower heads are small at seated distance. A further pass needs new
    screenshots and a new ranked list.
 
-## Current verification (2026-10-12 late evening, uncommitted working tree)
+## Current verification (2026-10-12 late evening, commit `de92449`)
 
 Binary SHA-256 `bd0855ca8d65ed9ad79b4b32fef6df372ea86a5065e13143e739ae98c1714c40`: render/geometry
 **200/200**, simulation **134/134**, full CTest **75/75** in 148.7 s
