@@ -58,6 +58,7 @@ endif()
 
 add_library(trainsim_core STATIC
     src/config/Settings.cpp
+    src/sim/Environment.cpp
     src/sim/PassengerSystem.cpp
     src/sim/Route.cpp
     src/sim/RouteSimulation.cpp
@@ -114,7 +115,12 @@ if(TRAINSIM_BUILD_GAME)
         src/render/OpenGL33WaterEffect.cpp
         src/render/MeshBuilder.cpp
         src/render/ProceduralMaterials.cpp
-        src/render/SceneRenderer.cpp)
+        src/render/SceneAvatars.cpp
+        src/render/SceneRenderer.cpp
+        src/render/SceneStreaming.cpp
+        src/render/TrackGeometryBuild.cpp
+        src/render/TrainInteriorBuild.cpp
+        src/render/WorldGeometryBuild.cpp)
     target_include_directories(trainsim_render PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(trainsim_render PUBLIC trainsim_core CNA CNA::GamerServices PRIVATE trainsim_warnings)
 
@@ -179,6 +185,7 @@ if(TRAINSIM_BUILD_TESTS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(trainsim_tests
         tests/AvatarMotionTests.cpp
+        tests/EnvironmentTests.cpp
         tests/FrameTimingTests.cpp
         tests/MouseLookTests.cpp
         tests/PassengerSystemTests.cpp
@@ -325,6 +332,50 @@ if(TRAINSIM_BUILD_TESTS)
             PASS_REGULAR_EXPRESSION
                 "other_train_cars=3 other_train_cabs=2.*player_x=-1\\.0.*player_yaw_deg=-90\\.0"
             TIMEOUT 30)
+        # The first freight service (ENV-137) starts beside car 2 with all twelve vehicles drawn.
+        add_test(NAME trainsim_freight_pass_view_smoke
+            COMMAND train-simulator --frames 2 --route-km 37.292 --time-scale 0.01 --car 2
+                    --left-window-view --quality 0 --no-audio --no-avatars --report-state)
+        set_tests_properties(trainsim_freight_pass_view_smoke PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy"
+            PASS_REGULAR_EXPRESSION
+                "other_train_cars=12 other_train_cabs=2 other_train_locomotives=1 other_train_freight_wagons=11"
+            TIMEOUT 30)
+        # Chunk 111's diesel unit starts 950 m beyond its anchor, which is outside the scenery
+        # window; the wider oncoming-traffic window must still draw it beside the player.
+        add_test(NAME trainsim_traffic_window_view_smoke
+            COMMAND train-simulator --frames 2 --route-km 28.780 --time-scale 0.01 --car 2
+                    --left-window-view --quality 0 --no-audio --no-avatars --report-state)
+        set_tests_properties(trainsim_traffic_window_view_smoke PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy"
+            PASS_REGULAR_EXPRESSION
+                "other_train_cars=2 other_train_cabs=2 other_train_locomotives=0"
+            TIMEOUT 30)
+        # Time of day and weather (ENV-138/139): night lighting with lit windows and lamp
+        # glow, rain streaks with window beads, rain ambience, and rejected malformed options.
+        add_test(NAME trainsim_night_environment_smoke
+            COMMAND train-simulator --frames 2 --route-km 2 --time-scale 0.01 --car 4
+                    --window-view --time 23:30 --quality 0 --no-audio --no-avatars --report-state)
+        set_tests_properties(trainsim_night_environment_smoke PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy"
+            PASS_REGULAR_EXPRESSION
+                "clock_minutes=1410 weather=clear sun_elevation_deg=-1[0-9.]+ night=1\\.0.*night_glow_triangles=[1-9]"
+            TIMEOUT 30)
+        add_test(NAME trainsim_rain_environment_smoke
+            COMMAND train-simulator --frames 90 --route-km 52 --time-scale 0.01 --car 2
+                    --window-view --time 13:00 --weather rain --quality 0 --no-avatars
+                    --report-state)
+        set_tests_properties(trainsim_rain_environment_smoke PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy"
+            PASS_REGULAR_EXPRESSION
+                "weather=rain.*rain=1\\.0.*rain_streak_draws=[1-9][0-9]* rain_droplet_triangles=[1-9].*rain_audio=0\\.[0-9]*[1-9]"
+            TIMEOUT 60)
+        add_test(NAME trainsim_invalid_time_option
+            COMMAND train-simulator --frames 1 --time 25:00 --no-audio)
+        set_tests_properties(trainsim_invalid_time_option PROPERTIES WILL_FAIL TRUE TIMEOUT 15)
+        add_test(NAME trainsim_invalid_weather_option
+            COMMAND train-simulator --frames 1 --weather snow --no-audio)
+        set_tests_properties(trainsim_invalid_weather_option PROPERTIES WILL_FAIL TRUE TIMEOUT 15)
         add_test(NAME trainsim_urban_traffic_view_smoke
             COMMAND train-simulator --frames 2 --route-km 2 --time-scale 0.01 --car 4
                     --window-view --quality 0 --no-audio --no-avatars --report-state
@@ -750,7 +801,7 @@ if(TRAINSIM_BUILD_TESTS)
         set_tests_properties(trainsim_showcase_population_smoke PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy"
             PASS_REGULAR_EXPRESSION
-                "passengers=38.*exchange_started=4.*visible_npc=1[0-9] npc_gaze=[1-9][0-9]* npc_reading=[1-9][0-9]* npc_phone=[1-9][0-9]* npc_social=[0-9]+ npc_distance_gait=[0-9]+ npc_seat_transitions=[0-9]+ npc_acknowledgement=[0-9]+ conductor_devices=[0-9]+ platform_phone=1 platform_social=[1-9][0-9]* sky_clouds=8 avatar_rendering=1 avatar_visuals=18 ready_avatar_visuals=18 civilian_avatar_pool=17"
+                "passengers=38.*exchange_started=4.*visible_npc=2[0-9] npc_gaze=[1-9][0-9]* npc_reading=[1-9][0-9]* npc_phone=[1-9][0-9]* npc_social=[0-9]+ npc_distance_gait=[0-9]+ npc_seat_transitions=[0-9]+ npc_acknowledgement=[0-9]+ conductor_devices=[0-9]+ platform_phone=1 platform_social=[1-9][0-9]* sky_clouds=8 avatar_rendering=1 avatar_visuals=24 ready_avatar_visuals=24 civilian_avatar_pool=23.*platform_seated=3 platform_suitcases=2"
             # Native avatar construction and first upload profile near 21 seconds alone; retain a
             # measured full-suite margin without reducing the 90-frame readiness/exchange check.
             TIMEOUT 45)

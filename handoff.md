@@ -1,6 +1,7 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-12 (second visual audit, PERF-002 streaming risks and design-gap repairs).
+Updated: 2026-10-12 late evening (the whole goal list is implemented, documented and verified;
+**not committed or pushed** — ask the owner before committing).
 Repository: `libcna/train-simulator`, current branch `develop`. Written for the next agent
 (expected: Codex, "astra high") starting from a fresh context.
 
@@ -34,6 +35,19 @@ Repository: `libcna/train-simulator`, current branch `develop`. Written for the 
   work was committed and pushed to `origin/develop` with the owner's approval.
   Do not start further work on
   your own.
+- Later on 2026-10-12 the owner set a new goal list (Czech, translated): *faster world
+  preparation; split `SceneRenderer`; more varied building floor plans; busier platform life:
+  more people waiting on benches, travellers with suitcases and more varied station
+  furniture; more types of oncoming trains such as freight trains and other passenger sets;
+  time of day and weather.* The first four are implemented (see "Work in progress" below);
+  the last two are **not started**. The owner then asked to finish the current item and
+  write this handoff. The work is **not committed or pushed**; ask the owner before
+  committing. Continue with the remaining goal items only when the owner asks you to.
+- Still on 2026-10-12 the owner said (Czech) "read handoff.md and continue". The next agent
+  finished the remaining goal items (oncoming train types ENV-137, time of day ENV-138, weather
+  ENV-139), the outstanding documentation for ENV-134/136 and PERF-003, formal capture scripts,
+  and repairs of defects its captures exposed. Nothing was committed; ask the owner before
+  committing or pushing, and do not start further work without a new instruction.
 - The owner's conversation is Czech; all repository content, commit messages
   and this document are English.
 
@@ -80,9 +94,9 @@ prove realism; only inspected engine screenshots do.
 ```bash
 export CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv
 cmake --build build --parallel 4                 # incremental; already configured
-./build/trainsim_render_tests                    # 193 render/geometry unit tests
-./build/trainsim_tests                           # 128 simulation unit tests
-env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure   # 69 tests; shared-host duration varies
+./build/trainsim_render_tests                    # 200 render/geometry unit tests
+./build/trainsim_tests                           # 134 simulation unit tests
+env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure   # 75 tests; shared-host duration varies
 cmake --build build --parallel 4 --target trainsim_world_benchmark   # optional CPU window benchmark
 python3 tools/test_streaming_risks.py            # six moving GPU scenarios (wraps itself in the private display)
 ./build/train-simulator                          # interactive play (start menu)
@@ -155,7 +169,7 @@ New focused headers, each with unit tests, each wired into `SceneRenderer.cpp`:
 | `TerminalGeometry.hpp` | buffer stops, train shed, head house with name lettering, forecourt taxi rank; the track batch now overruns both route ends by 125 m (`kTerminalTrackOverrunMetres`) | `terminal_buffer_stops`, `terminal_shed_columns`; `capture_terminal_composition.sh` (`terminal-composition`) |
 
 Also: `Route.hpp` exports `kValleyViaductBegin/EndMetres` and
-`kTunnelExtentsMetres`. `SceneRenderer.cpp` remains large (~9,300 lines); keep
+`kTunnelExtentsMetres`. `SceneRenderer.cpp` has since been split (see below); keep
 adding reusable geometry in headers rather than inline.
 
 ## Implementation map of the 2026-10-12 session (ENV-124 to ENV-133, PERF-002)
@@ -178,6 +192,44 @@ Capture scripts: `tools/capture_visual_audit_pass2.sh` (59-pose baseline, prefix
 1,800-frame 8x ride; `before` is preserved), `tools/test_streaming_risks.py`. Evidence is in
 `build/visual-audit/audit2-*`, `audit2-repairs-*`, `streaming-risk-*` and the comparison sheets
 in `build/visual-audit/audit2-sheets/`.
+
+## Goal list of 2026-10-12 evening: done, uncommitted on top of `ecd835e`
+
+Everything below is in the working tree, builds without project warnings (the only warning is
+sharp-runtime's own `__int128` pedantic note) and passes every test. `git status` shows about 55
+changed or new files. Do not revert it; ask the owner before committing. Evidence and limits are
+in `docs/VISUAL_AUDIT_2.md` ("Owner goal list") and `docs/STREAMING.md` (PERF-003).
+
+| Goal item | Where | Evidence |
+| --- | --- | --- |
+| Split `SceneRenderer` | `SceneRenderer.cpp` ~1,900 lines; `SceneShared.hpp`, `SceneAvatars.cpp`, `SceneStreaming.cpp`, `WorldGeometryBuild.cpp`, `TrackGeometryBuild.cpp`, `TrainInteriorBuild.cpp` (see `docs/ARCHITECTURE.md`) | `build/SceneRenderer.cpp.presplit` kept as backup; `build/visual-audit/split-check.sh` |
+| Faster world preparation (PERF-003) | `WorldGeometry::build` on up to 4 threads, bit-identical to 1 thread | `trainsim_world_benchmark`; table in `docs/STREAMING.md` |
+| Building floor plans (ENV-134) | `HousePlan`/`BlockPlan` in `StreamingWorld.hpp`, `FacadeGeometry.hpp`, `WorldGeometryBuild.cpp` | `tools/capture_plans_platforms.sh` (`plans-*`) |
+| Busier platforms (ENV-136) | `PlatformLayout.hpp`, `StationGeometry.hpp`, `SceneAvatars.cpp` | `capture_plans_platforms.sh` (`platform-station-*`). This session moved the vending machine from +12.6 to +25.4 m: it hid the departure board at major stations and termini. |
+| Oncoming train types (ENV-137) | `world/OtherTrainConsist.hpp`, `render/OtherTrainGeometry.hpp`, `StreamingWorld::otherTrains()` | `tools/capture_oncoming_trains.sh` (`oncoming-*`); smokes `trainsim_freight_pass_view_smoke`, `trainsim_traffic_window_view_smoke` |
+| Time of day (ENV-138) | `sim/Environment.hpp/.cpp`, `render/Atmosphere.hpp`, `NightLighting.hpp`, `SkyGeometry.hpp::addAtmosphereSky`, `WorldMaterial::NightGlow` | `tools/capture_time_weather.sh` (`time-weather-*`); smoke `trainsim_night_environment_smoke` |
+| Weather (ENV-139) | same, plus `WeatherGeometry.hpp`, rain loop in `TrainAudio.cpp`, `assets/audio/rain.wav` (generated by `tools/generate_audio.py`) | `capture_time_weather.sh`; smoke `trainsim_rain_environment_smoke` |
+
+Key facts for the next agent:
+
+- Oncoming types: phase in variant bits 0-1, type above (`otherTrainVariant`), rotation by service
+  ordinal (`index/37`): freight, regional, intercity, diesel. Ordinals 1 and 29 stay regional, so
+  the old pass-by and AI-crossing smokes are unchanged. Speeds 31/38/25/28 m/s. Crossings close
+  for the nearest vehicle. Repaired pre-existing defect: services used to exist only while their
+  anchor chunk was loaded and could pop in beside the player; `otherTrains()` spans eight chunks.
+- Time of day: the station clock start is `service_start_minutes` (default 557 = 09:17) or
+  `--time HH:MM`; weather is `weather` 0..5 or `--weather NAME`; both also in the pause menu
+  (items 11-12) and persisted like other settings (CLI values are not saved). The default 09:17
+  clear start is bit-identical to the old fixed daylight (unit test, and zero-pixel differences on
+  static recaptures), so earlier evidence remains valid.
+- Shadows are baked per streamed window from `worldSun_` (whole-degree steps, at least 25
+  degrees) and fade at draw time; the sun is not part of the prefetch validity key.
+- Repaired after the first captures: unlit leaf sprays stayed bright at night (now tinted), window
+  beads looked like large white triangles (smaller/fainter), rain fell under platform canopies (the
+  platform half of the rain field is skipped beside a station).
+- Known limits: no wet surfaces/puddles/snow/lightning; the player train's exterior keeps saloon
+  lighting at night (audit cameras only); an oncoming service still appears/vanishes at the ends
+  of its 1.9 km traversal.
 
 ## Known open issues (outside the ranked list)
 
@@ -219,11 +271,28 @@ in `build/visual-audit/audit2-sheets/`.
    from other agents (documented per section). Re-measure on a quiet host before
    treating any p95/p99 shift as a regression.
 5. Remaining visual gaps after pass 2: avatar style is the immutable CNA catalog's;
-   houses and blocks still share one plan and window module each; the verge is vertex colour on
+   houses and blocks now have four plans each (ENV-134) but still one window module; the verge is vertex colour on
    a neutral detail texture; flower heads are small at seated distance. A further pass needs new
    screenshots and a new ranked list.
 
-## Current verification (2026-10-12)
+## Current verification (2026-10-12 late evening, uncommitted working tree)
+
+Binary SHA-256 `bd0855ca8d65ed9ad79b4b32fef6df372ea86a5065e13143e739ae98c1714c40`: render/geometry
+**200/200**, simulation **134/134**, full CTest **75/75** in 148.7 s
+(`build/visual-audit/env-ctest-final.log`). The captures were taken with the immediately preceding
+binaries of this session (the last relink only picked up a dependency library rebuilt by another
+agent and the vending-machine move, which `plans-platforms-*` recaptured). Moving 8x rides from
+km 52 (`build/visual-audit/env-ride-*.log`): default p95 25.6 / p99 25.9 ms, night 25.7 / 29.5,
+rain 25.7 / 26.2, changing 25.7 / 26.1, each with 45 prepared swaps and no late preparation; peak
+RSS about 1.0 GiB. The world benchmark this session ran at host load ~26 and is not comparable.
+Dependencies were only read and built from.
+
+Contact sheets: build them as JPEG (`montage ... -depth 8 -quality 85 x.jpg`). The default
+16-bit PNG sheets reach 5–6.5 MB and reading them ended three agent sessions on 2026-10-12.
+Sheets of this session: `build/visual-audit/audit2-sheets/oncoming-*.jpg`, `time-weather-*.jpg`,
+`tw2.jpg`, `tw3.jpg`, `plans-platforms-*.jpg`.
+
+## Previous verification (2026-10-12, commit `ecd835e`)
 
 Final binary SHA-256 `3e89842194b2ee994aabca6e64545cc164a51a891a30ceebc8fc36a122648f0e`:
 render/geometry **193/193**, simulation **128/128**, full CTest **69/69** in 149.9 s

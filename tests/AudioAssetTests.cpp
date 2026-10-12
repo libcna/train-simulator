@@ -50,7 +50,7 @@ TEST_CASE("runtime audio manifest contains every generated railway and announcem
         "braking.wav", "curve_squeal.wav",
         "rail_texture.wav",
         "gangway_rattle.wav", "gangway_door.wav", "toilet_door.wav",
-        "station_ambience.wav", "interior_hvac.wav", "announcement_chime.wav",
+        "station_ambience.wav", "interior_hvac.wav", "announcement_chime.wav", "rain.wav",
         "passenger_murmur.wav",
         "passenger_murmur_01.wav", "passenger_murmur_02.wav", "passenger_murmur_03.wav",
         "footstep_carpet_01.wav", "footstep_carpet_02.wav",

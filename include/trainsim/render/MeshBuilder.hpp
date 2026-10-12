@@ -48,6 +48,8 @@ class MeshBuilder
 {
 public:
     void clear() noexcept { data_.vertices.clear(); data_.indices.clear(); }
+    // Append another mesh after this one; its indices are offset to the appended vertices.
+    void append(const MeshData& other);
     [[nodiscard]] const MeshData& data() const noexcept { return data_; }
     // Fixed front projection for thin panels; avoids dominant-axis ties at rounded edges.
     void projectXYDetailUVs(std::size_t firstVertex,

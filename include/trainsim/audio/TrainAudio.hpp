@@ -1,5 +1,6 @@
 #pragma once
 
+#include "trainsim/sim/Environment.hpp"
 #include "trainsim/sim/PassengerSystem.hpp"
 #include "trainsim/sim/Route.hpp"
 #include "trainsim/sim/RouteSimulation.hpp"
@@ -52,6 +53,9 @@ public:
                 float playerX, float playerZ, float playerYaw, bool playerWalking,
                 bool toiletDoorOpen, bool inTunnel, bool onBridge);
     void setSettings(TrainAudioSettings settings);
+    // Rain ambience (ENV-139) follows the weather mode and simulated service time.
+    void setWeather(Sim::WeatherMode mode) noexcept;
+    [[nodiscard]] float rainLevel() const noexcept;
     void setPaused(bool paused) noexcept;
     [[nodiscard]] bool available() const noexcept;
     [[nodiscard]] bool paused() const noexcept;

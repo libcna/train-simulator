@@ -34,8 +34,9 @@ in vec3 tint;
 in float depth;
 uniform mat4 World;
 uniform sampler2D materialTexture;
-uniform vec3 ambient,diffuse,sunDirection,fogColour,eye,wavePhases;
+uniform vec3 ambient,diffuse,sunDirection,fogColour,eye,wavePhases,skyColour;
 uniform vec2 fogRange;
+uniform float sunSparkle;
 out vec4 result;
 float filteredWave(float phase) {
     float footprint=fwidth(phase);
@@ -57,8 +58,9 @@ void main() {
     float facing=clamp(dot(n,v),0.0,1.0);
     float fresnel=0.020+0.980*pow(1.0-facing,5.0);
     vec3 reflected=reflect(-v,n);
-    // Analytic clear-sky reflection, not a fake reflection of nearby geometry.
-    vec3 sky=mix(fogColour,vec3(0.35,0.59,0.76),
+    // Analytic sky reflection, not a fake reflection of nearby geometry. The zenith colour
+    // follows time of day and weather (ENV-138/139).
+    vec3 sky=mix(fogColour,skyColour,
                  smoothstep(0.0,0.65,max(reflected.y,0.0)));
     vec3 lighting=ambient+diffuse*max(dot(n,-sunDirection),0.0);
     vec3 detail=mix(vec3(0.92),texture(materialTexture,texcoord).rgb,0.20);
@@ -67,7 +69,7 @@ void main() {
     vec3 h=normalize(v-sunDirection);
     float nh=max(dot(n,h),0.0);
     float sparkle=0.16*pow(nh,64.0)+0.30*pow(nh,320.0);
-    water+=vec3(1.0,0.96,0.83)*sparkle*max(-sunDirection.y,0.0);
+    water+=vec3(1.0,0.96,0.83)*sparkle*max(-sunDirection.y,0.0)*sunSparkle;
     float keep=clamp((fogRange.y-depth)/max(fogRange.y-fogRange.x,0.001),0.0,1.0);
     result=vec4(mix(fogColour,water,keep),1.0);
 }
@@ -78,7 +80,8 @@ OpenGL33WaterEffect::OpenGL33WaterEffect(GraphicsDevice& device)
 OpenGL33WaterEffect::~OpenGL33WaterEffect()=default;
 bool OpenGL33WaterEffect::valid() const { return effect_->IsEffectValid(); }
 void OpenGL33WaterEffect::draw(GpuMesh& mesh,GraphicsDevice& device,BasicEffect& reference,
-    const Matrix& world,const Matrix& view,const Matrix& projection,double serviceSeconds)
+    const Matrix& world,const Matrix& view,const Matrix& projection,double serviceSeconds,
+    const Vector3& skyColour,float sunSparkle)
 {
     effect_->setWorldProperty(world); effect_->setViewProperty(view); effect_->setProjectionProperty(projection);
     effect_->Apply();
@@ -90,6 +93,8 @@ void OpenGL33WaterEffect::draw(GpuMesh& mesh,GraphicsDevice& device,BasicEffect&
     vector("sunDirection",reference.DirectionalLight0.getDirectionProperty());
     vector("fogColour",reference.getFogColorProperty());
     vector("eye",Matrix::Invert(view).getTranslationProperty());
+    vector("skyColour",skyColour);
+    effect_->SetUniformFloat("sunSparkle",sunSparkle);
     const auto phases=waterWavePhases(serviceSeconds);
     effect_->SetUniformVec3("wavePhases",phases[0],phases[1],phases[2]);
     effect_->SetUniformVec2("fogRange",reference.getFogStartProperty(),reference.getFogEndProperty());

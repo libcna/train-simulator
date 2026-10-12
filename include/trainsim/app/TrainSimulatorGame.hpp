@@ -68,6 +68,9 @@ struct LaunchOptions
     std::optional<int> startDirection;
     std::optional<int> startCar;
     std::optional<int> graphicsQuality;
+    // Runtime overrides of the time-of-day and weather preferences; never persisted.
+    std::optional<int> serviceStartMinutes;
+    std::optional<int> weatherMode;
 };
 
 class TrainSimulatorGame final : public Microsoft::Xna::Framework::Game
@@ -95,6 +98,7 @@ private:
     void releaseMouseCapture(bool unexpected);
     void applyAudioSettings();
     void persistSettings() const;
+    void applyEnvironmentSettings();
     [[nodiscard]] std::optional<std::size_t> interactableSeat() const;
     void interact();
     void runInteractionSmoke();
@@ -119,6 +123,9 @@ private:
     Config::Settings settings_;
     int loadedGraphicsQuality_ = 2;
     bool graphicsQualityAdjustedInMenu_ = false;
+    int loadedServiceStartMinutes_ = 9*60 + 17;
+    int loadedWeatherMode_ = 0;
+    bool environmentAdjustedInMenu_ = false;
 
     std::unique_ptr<Render::SceneRenderer> scene_;
     std::unique_ptr<Audio::TrainAudio> audio_;

@@ -222,3 +222,38 @@ the worker (42–87 ms with two cores or under load).
 - Segmentation adds one draw call per extra segment (none to three in the measured windows).
 - No result here claims that every frame hitch is gone; the private compositor's ~26 ms cadence
   also hides any finer pacing behaviour.
+
+## PERF-003 — parallel world preparation
+
+`WorldGeometry::build` now generates the window's chunks on up to
+`WorldGeometry::defaultWorkerThreads()` = clamp(hardware threads / 2, 1, 4) threads, each into its
+own `WorldBuildContext` (material builders, counters, route-point cache), then appends the parts
+in chunk order with `MeshBuilder::append` and `WorldGeometryCounters::operator+=`. Stations are
+built afterwards on the calling thread. The unit test "parallel chunk generation reproduces the
+sequential world window exactly" compares 1 and 4 threads vertex for vertex at four route
+positions and qualities. The streaming worker itself still runs one preparation at a time.
+
+`tools/benchmark_world.cpp` (target `trainsim_world_benchmark`, excluded from the default build)
+times 17 windows spread over the route:
+
+| Run | Host load | 1 thread | 2 threads | 4 threads |
+| --- | --- | --- | --- | --- |
+| Earlier session, before ENV-137-139 | about 4.5 | 121.8 ms | 79.1 ms | 55.6 ms |
+| This session, with night glow (`2 0 286.4 17 N`) | about 26 | 320.9 ms (max 520.8) | — | 150.1 ms (max 340.3) |
+
+The second row was measured while other agents loaded the shared host and is not a regression
+figure; it shows the same roughly 2-2.5x parallel gain. Re-measure on a quiet host before comparing
+absolute times.
+
+### Additions with ENV-137 to ENV-139
+
+- Oncoming services come from `StreamingWorld::otherTrains()`, a window of eight chunks each side
+  computed from chunk indices alone. The scenery window and its generation cost are unchanged.
+- Each build receives the shadow-casting sun (`SunPosition`), captured when the job starts and
+  refreshed by the renderer only in whole-degree steps. It is not part of the job's validity key,
+  so a prepared window is never discarded because the clock moved; at worst its baked projected
+  shadows are one degree behind the sun.
+- `WorldMaterial::NightGlow` is a fifteenth world material (lit windows, lamp heads and pools). It
+  is always built (a few thousand triangles in towns) and drawn only after dusk.
+- The 8x moving rides in `docs/VISUAL_AUDIT_2.md` (default, night, rain, changing) all kept 45
+  prepared swaps with no late preparation.

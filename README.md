@@ -16,7 +16,10 @@ The ranked screenshot campaign is tracked in [the visual audit](docs/VISUAL_AUDI
 listed findings have before/after engine evidence as of 2026-10-10. A second screenshot pass
 ([VISUAL_AUDIT_2.md](docs/VISUAL_AUDIT_2.md), ENV-124 to ENV-133) addressed the lineside verge,
 repeated houses and blocks, field boundaries, station canopies, interior signage and the cab
-sides on 2026-10-12. That closes the listed defects, not visual realism in general.
+sides on 2026-10-12. That closes the listed defects, not visual realism in general. The owner's
+follow-up goal list (ENV-134 to ENV-139, PERF-003) added building floor plans, busier platforms,
+four oncoming train types, time of day and weather, a faster parallel world build, and split
+`SceneRenderer` into focused translation units.
 See [the development handoff](handoff.md) for verified progress, remaining work and build constraints.
 
 ## Screenshots
@@ -173,12 +176,13 @@ output rather than external art assets and may be refreshed as the procedural ar
   sparse road overpasses with terrain-reaching ramps, supports and guardrails,
   lightweight bidirectional road traffic with rounded low-poly bodies, sloped glazing, mirrors,
   wheels, hub cues and directional lights,
-  detailed articulated passing trains, and short parked services at
-  major stations. AI cars share a batched mesh with individual windows and doors, end gangways,
-  bogies, wheels, underfloor equipment, and roof units; each short consist carries one raised
-  centre-car pantograph aligned to the contact wire. Exposed ends receive distinct driving-cab
-  overlays with side glazing, divided windscreens, wipers, destination pixels, crash skirts and
-  direction-correct white or red marker lights.
+  four types of oncoming train (ENV-137) and short parked regional or diesel units at
+  major stations: the three-car red/cream regional unit, a locomotive-hauled intercity (blue
+  electric locomotive and five coaches), a 200 m freight (green and yellow locomotive with
+  container flats, tank wagons, covered hoppers and loaded open wagons) and a two-car diesel unit.
+  Each type has its own speed, length and passing sound; vehicles carry bogies, buffers,
+  pantographs (raised trailing, lowered leading on locomotives), raked cabs with direction-correct
+  white or red lamps and, at night, lit saloon windows.
   Moving consists complete a continuous 1.9 km pass before an out-of-view reset, and both their
   spatial audio and geometry follow the same widened parallel alignment through island stations.
   Static scenery and the 2 km track batch are prepared on CPU workers ahead of each transition,
@@ -204,7 +208,14 @@ output rather than external art assets and may be refreshed as the procedural ar
   conversation gestures, a wrist-attached handset, and window-readable wheeled luggage beside
   alternating waiting passengers, makes
   station calls feel occupied without creating a persistent city crowd simulation.
-- Normal-based sunny directional lighting over all project-generated geometry, with smooth tunnel
+- Time of day and weather (ENV-138/139): the station clocks' service time moves a summer sun
+  (sunrise 04:30, sunset 21:30) with golden light, twilight glow, stars and a moon; after dark,
+  rooms, street and platform lamps light up, platforms are floodlit and signals glow. Weather is
+  clear, cloudy, overcast, rain or fog, or changes gradually on a three-hour itinerary: grey
+  skies and diffuse light replace the sun, shadows fade, fog closes in, and rain adds streaks
+  around the train, beads on the windows and a rain ambience. The default 09:17 clear start is
+  pixel-identical to the earlier fixed daylight.
+- Normal-based directional lighting over all project-generated geometry, with smooth tunnel
   darkening, depth-masked window sunlight across the saloon floor, subtle avatar contact shadows,
   unlit information displays, quality-scaled procedurally textured soft fair-weather clouds and
   low horizon banks,
@@ -456,11 +467,15 @@ local override. The user file overlays:
 - vertical field of view;
 - Low/Medium/High graphics quality profile;
 - vegetation rendering distance;
-- synchronized announcement captions.
+- synchronized announcement captions;
+- service-day start time (`service_start_minutes`, default 557 = 09:17) and weather
+  (`weather`: 0 clear, 1 cloudy, 2 overcast, 3 rain, 4 fog, 5 changing).
 
 While paused, the arrow keys adjust field of view, mouse sensitivity, camera-motion intensity,
-graphics quality, master volume, train volume, announcements, passenger voices, and vegetation
-range. Changes apply immediately. Quality profiles cap vegetation at 400/700/1000 m, bound
+graphics quality, master volume, train volume, announcements, passenger voices, vegetation
+range, announcement text, the time of day (half-hour steps) and the weather. Changes apply
+immediately. `--time HH:MM` and `--weather clear|cloudy|overcast|rain|fog|changing` set the
+same values for one launch without saving them, like `--quality`. Quality profiles cap vegetation at 400/700/1000 m, bound
 dynamic-object range, render the nearest 6/9/12 onboard avatars, and scale platform population,
 contact shadows, and parked trains while leaving all 38 simulated characters unchanged. Medium
 and High request desktop MSAA from CNA while Low keeps it disabled; because the back buffer is
@@ -512,6 +527,11 @@ See the living [realism and production audit](docs/AUDIT.md),
   hands.
   Their marked analog faces advance continuously from the simulated service clock, including
   during accelerated development runs and repeated return journeys.
+- Time of day and weather are approximations: projected ground shadows are baked per streamed
+  window from a sun no lower than 25 degrees and fade instead of lengthening; there are no wet
+  surfaces, puddles, snow or lightning; rain streaks are a camera-local field and are hidden only
+  on the platform side under canopies; at night the player train's own exterior shell keeps its
+  saloon lighting (visible only from audit cameras).
 - Full cast shadows, real-time glass reflections, and authored motion-capture locomotion clips are
   not implemented; robust contact/highlight approximations and smoothly blended procedural bone
   layers are used instead.

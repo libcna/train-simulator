@@ -325,6 +325,32 @@ def make_ambience(output: Path) -> None:
         + 0.08 * math.sin(2 * math.pi * (90 + 70 * t / 1.55) * t),
     )
 
+    # Rain on the roof and glazing (ENV-139): cross-faded hiss and a softer low body make a
+    # seamless eight-second loop, with short decaying droplet ticks wrapped across the boundary.
+    # A separate generator keeps every earlier asset byte-identical.
+    rain_rng = random.Random(0x5241494E)
+    rain_seconds = 8.0
+    rain_frames = round(rain_seconds * SAMPLE_RATE)
+    drops = [0.0] * rain_frames
+    for _ in range(520):
+        start = rain_rng.randrange(rain_frames)
+        amplitude = rain_rng.uniform(0.012, 0.055)
+        frequency = rain_rng.uniform(1_600.0, 4_400.0)
+        decay = rain_rng.uniform(0.004, 0.012)
+        for offset in range(round(decay * 5 * SAMPLE_RATE)):
+            local = offset / SAMPLE_RATE
+            drops[(start + offset) % rain_frames] += (
+                amplitude * math.exp(-local / decay) * math.sin(2 * math.pi * frequency * local)
+            )
+
+    def rain(t: float) -> float:
+        blend = 0.5 - 0.5 * math.cos(math.pi * t / rain_seconds)
+        hiss = (1.0 - blend) * n(t + 3.1, 0.9) + blend * n(t - rain_seconds + 3.1, 0.9)
+        body = (1.0 - blend) * n(t + 11.3, 0.21) + blend * n(t - rain_seconds + 11.3, 0.21)
+        return 0.045 * hiss + 0.050 * body + drops[min(int(t * SAMPLE_RATE), rain_frames - 1)]
+
+    write_wave(output / "rain.wav", rain_seconds, rain)
+
 
 def render_piper(piper: str, model: Path, output: Path, name: str, text: str) -> None:
     destination = output / name

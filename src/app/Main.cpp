@@ -1,4 +1,5 @@
 #include "trainsim/app/TrainSimulatorGame.hpp"
+#include "trainsim/sim/Environment.hpp"
 
 #include <array>
 #include <cmath>
@@ -190,6 +191,26 @@ int main(int argc, char** argv)
                 }
                 options.graphicsQuality = quality;
             }
+            else if (argument == "--time" && index + 1 < argc)
+            {
+                const auto minutes = TrainSim::Sim::parseClockTime(argv[++index]);
+                if (!minutes)
+                {
+                    std::cerr << "--time must be HH:MM between 00:00 and 23:59\n";
+                    return 2;
+                }
+                options.serviceStartMinutes = *minutes;
+            }
+            else if (argument == "--weather" && index + 1 < argc)
+            {
+                const auto mode = TrainSim::Sim::parseWeatherMode(argv[++index]);
+                if (!mode)
+                {
+                    std::cerr << "--weather must be clear, cloudy, overcast, rain, fog or changing\n";
+                    return 2;
+                }
+                options.weatherMode = static_cast<int>(*mode);
+            }
             else if (argument == "--help")
             {
                 std::cout << "train-simulator [--frames N] [--run-seconds S] [--time-scale X] [--development-dwell] "
@@ -198,7 +219,9 @@ int main(int argc, char** argv)
                              "[--no-avatars] [--no-vsync] [--variable-step] [--facade-control|--linear-facades] "
                              "[--report-state] [--interaction-smoke] [--station 1-12] [--car 1-6] "
                              "[--route-km 0-286.4] [--direction -1|1] "
-                             "[--quality 0-2] [--window-view] [--left-window-view] "
+                             "[--quality 0-2] [--time HH:MM] "
+                             "[--weather clear|cloudy|overcast|rain|fog|changing] "
+                             "[--window-view] [--left-window-view] "
                              "[--platform-view] "
                              "[--door-view] [--gangway-view] [--vestibule-view] [--sunlight-view] "
                              "[--signal-view] [--passenger-view] "

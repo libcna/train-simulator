@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <array>
+#include <vector>
 #include <cstdint>
 
 namespace TrainSim::Render {
@@ -72,7 +73,7 @@ inline void addFacadeEndMaterials(MeshBuilder& target,
 
 inline constexpr int apartmentFloorCount(unsigned variant) noexcept
 {
-    return 5+static_cast<int>(variant%4U);
+    return ((variant>>3U)&3U)==1U ? 4 : 5+static_cast<int>(variant%4U);
 }
 
 // Urban block identity (ENV-129): render palette, balcony rhythm and plinth tone from a stable
@@ -109,8 +110,20 @@ inline BlockStyle blockStyle(std::uint32_t seed)
     return pattern==3 || (pattern==1 && inner) || (pattern==2 && !inner);
 }
 
+// Plan bits 3-4 (ENV-134): 1 is a long four-storey terrace, 3 a stepped block whose far half
+// is one storey lower; 0 and 2 keep the slab (2 adds a set-back penthouse on the roof).
+[[nodiscard]] inline float apartmentLength(unsigned variant) noexcept
+{
+    return ((variant>>3U)&3U)==1U ? 19.0f : 13.0f;
+}
 inline ResidentialEnvelope apartmentEnvelope(float scale,unsigned variant)
 {
+    const float length=apartmentLength(variant);
+    if (((variant>>3U)&3U)==1U)
+    {
+        const float terrace=10.5f*scale;
+        return {10.0f*scale,length*scale,terrace,10.5f*scale,(length+0.5f)*scale,terrace+0.5f};
+    }
     const float wall=(13.0f+static_cast<float>(variant%4U)*2.2f)*scale;
     // Existing slab thickness is a fixed half metre, independent of the building footprint scale.
     return {10.0f*scale,13.0f*scale,wall,10.5f*scale,13.5f*scale,wall+0.5f};
@@ -292,6 +305,34 @@ inline void addPitchedRoof(MeshBuilder& walls,MeshBuilder& roof,
     }
 }
 
+// Hipped roof (ENV-134): four slopes rising to a short ridge along local Z, or to a point on a
+// square plan. Same tile mapping, closed underside and eave gutters as addPitchedRoof.
+inline void addHippedRoof(MeshBuilder& walls,MeshBuilder& roof,
+    float x,float eaveY,float z,float width,float length,float rise,float yaw,
+    const Microsoft::Xna::Framework::Color& colour)
+{
+    using namespace Microsoft::Xna::Framework;
+    if (width<=0 || length<=0 || rise<0) return;
+    const Matrix transform=Matrix::CreateRotationY(yaw)*Matrix::CreateTranslation(x,eaveY,z);
+    const float hw=width*0.5f, hl=length*0.5f, ridge=std::max(0.0f,hl-hw);
+    const auto p=[&](float px,float py,float pz) { return Vector3::Transform({px,py,pz},transform); };
+    const auto a=p(-hw,0,-hl), b=p(-hw,0,hl), e=p(hw,0,-hl), f=p(hw,0,hl);
+    const auto r0=p(0,rise,-ridge), r1=p(0,rise,ridge);
+    const float u=length/1.2f, v=std::hypot(hw,rise)/1.6f, w=width/1.2f;
+    roof.addTexturedQuad(a,b,r1,r0,colour,{0,0},{u,0},{u*0.5f+ridge/1.2f,v},{u*0.5f-ridge/1.2f,v});
+    roof.addTexturedQuad(r0,r1,f,e,colour,{u*0.5f-ridge/1.2f,v},{u*0.5f+ridge/1.2f,v},{u,0},{0,0});
+    roof.addTexturedTriangle({e,a,r0},{colour,colour,colour},{Vector2{0,0},Vector2{w,0},Vector2{w*0.5f,v}});
+    roof.addTexturedTriangle({b,f,r1},{colour,colour,colour},{Vector2{0,0},Vector2{w,0},Vector2{w*0.5f,v}});
+    walls.addBox({-hw,-0.055f,-hl},{hw,0.015f,hl},Color(151,153,145,255),transform);
+    for (float side : {-1.0f,1.0f})
+    {
+        walls.addBox({side*(hw+0.025f)-0.075f,-0.13f,-hl},{side*(hw+0.025f)+0.075f,-0.01f,hl},
+                     Color(76,80,78,255),transform);
+        walls.addBox({-hw,-0.13f,side*(hl+0.025f)-0.075f},{hw,-0.01f,side*(hl+0.025f)+0.075f},
+                     Color(76,80,78,255),transform);
+    }
+}
+
 inline ResidentialEnvelope houseEnvelope(float scale)
 {
     return {7*scale,10*scale,6*scale,7.7f*scale,10.8f*scale,8.15f*scale};
@@ -332,11 +373,20 @@ inline HouseStyle houseStyle(std::uint32_t seed)
     return style;
 }
 
-inline ResidentialEnvelope houseEnvelope(float scale,const HouseStyle& style)
+// `length` is the main body along the route at scale one (ENV-134 plans: 8, 10 or 13 m).
+inline ResidentialEnvelope houseEnvelope(float scale,const HouseStyle& style,float length=10.0f)
 {
     const float wall=(style.bungalow ? 3.3f : 6.0f)*scale;
     const float rise=(style.bungalow ? 2.5f : 2.15f)*style.pitch*scale;
-    return {7*scale,10*scale,wall,7.7f*scale,10.8f*scale,wall+rise};
+    return {7*scale,length*scale,wall,7.7f*scale,(length+0.8f)*scale,wall+rise};
+}
+
+// Facade bay centres along a house of `length` metres at scale one.
+inline std::vector<float> houseBays(float length)
+{
+    if (length>=12.0f) return {-4.4f,-1.5f,1.5f,4.4f};
+    if (length<=8.5f) return {-1.9f,1.9f};
+    return {-2.8f,0.0f,2.8f};
 }
 
 // Detached barn (dark stained boarding, wide doors) or rendered garage (up-and-over door) in a

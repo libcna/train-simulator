@@ -35,7 +35,14 @@ not require text-to-speech, downloads, or an internet connection while playing.
   widened parallel-track alignment at island platforms rather than a duplicated fixed offset. The
   1.9 km visible traversal resets only during an explicit silent ten-second interval. The OpenGL
   smoke requires the pass-by event, all three rendered external cars and both driving-cab ends,
-  rather than accepting an off-screen sound or a partially clipped consist.
+  rather than accepting an off-screen sound or a partially clipped consist. The four oncoming
+  types (ENV-137) differ in pitch and level (the freight lower and louder, the intercity
+  brighter); the trigger window is the consist's own half-length and the emitter follows the
+  vehicle nearest the listener, so a 200 m freight is heard along its whole length.
+- Rain (ENV-139) plays a seamless eight-second loop of cross-faded hiss, a low body and wrapped
+  droplet ticks (`rain.wav`), faded in and out at 0.5 per second with the weather's rain level,
+  muted in tunnels and louder while the platform doors are open. The asset is optional at
+  runtime, so an older asset directory still plays everything else.
 - A quiet synthesized electromechanical warning bell is spatialized at the nearest active level
   crossing. It consumes the same player-and-AI closure calculation as the two visual barriers, so
   an opposing service cannot lower the road protection silently or let audio outlive raised booms.

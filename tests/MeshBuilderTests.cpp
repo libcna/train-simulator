@@ -21,6 +21,10 @@
 #include "trainsim/render/ToiletGeometry.hpp"
 #include "trainsim/render/TrainExteriorGeometry.hpp"
 #include "trainsim/render/TerminalGeometry.hpp"
+#include "trainsim/render/OtherTrainGeometry.hpp"
+#include "trainsim/render/Atmosphere.hpp"
+#include "trainsim/render/NightLighting.hpp"
+#include "trainsim/render/WeatherGeometry.hpp"
 #include "trainsim/render/RoutePointCache.hpp"
 
 #include "trainsim/render/MeshBuilder.hpp"
@@ -1770,14 +1774,19 @@ TEST_CASE("residential roof envelopes track scale and every building height vari
             REQUIRE(town.roofWidth>town.width);
             REQUIRE(town.roofLength>town.length);
             const auto apartment=TrainSim::Render::apartmentEnvelope(scale,variant);
-            REQUIRE(std::abs(apartment.wallHeight-(13.0f+2.2f*static_cast<float>(variant%4U))*scale)<1e-5f);
+            // Plan bits 3-4 == 1 select the long four-storey terrace (ENV-134).
+            const bool terrace=((variant>>3U)&3U)==1U;
+            REQUIRE(std::abs(apartment.wallHeight-(terrace ? 10.5f
+                : 13.0f+2.2f*static_cast<float>(variant%4U))*scale)<1e-5f);
             REQUIRE(std::abs(apartment.roofHeight-apartment.wallHeight-0.5f)<1e-5f);
             REQUIRE(std::abs(apartment.width-10.0f*scale)<1e-5f);
-            REQUIRE(std::abs(apartment.length-13.0f*scale)<1e-5f);
+            REQUIRE(std::abs(apartment.length-(terrace ? 19.0f : 13.0f)*scale)<1e-5f);
             REQUIRE(apartment.roofWidth>apartment.width);
             REQUIRE(apartment.roofLength>apartment.length);
             const int floors=TrainSim::Render::apartmentFloorCount(variant);
-            REQUIRE(floors==5+static_cast<int>(variant%4U));
+            REQUIRE(floors==(terrace ? 4 : 5+static_cast<int>(variant%4U)));
+            // The top window row stays below the eaves for every plan.
+            REQUIRE((2.0f+static_cast<float>(floors-1)*2.35f+0.45f)*scale<apartment.wallHeight);
             const float topWindowEdge=(2.0f+static_cast<float>(floors-1)*2.35f+0.54f)*scale;
             const float roofClearance=(apartment.wallHeight-topWindowEdge)/scale;
             REQUIRE(roofClearance>0.5f);
@@ -4482,4 +4491,333 @@ TEST_CASE("staged upload urgency spreads the remainder over the frames before a 
     REQUIRE(stagedUploadBytesPerFrame(100'000,-102.0,1.0)==1'000);
     // A stationary train has no deadline pressure beyond the minimum.
     REQUIRE(stagedUploadBytesPerFrame(100'000,50.0,0.0)<=3);
+}
+
+TEST_CASE("parallel chunk generation reproduces the sequential world window exactly")
+{
+    using namespace TrainSim;
+    const auto route = Sim::Route::NorthernValleyExpress();
+    Render::WorldGeometry sequential(1), parallel(4);
+    for (const auto& [distance,quality] : std::array<std::pair<double,int>,4>{
+            {{52000,2},{192400,2},{123000,1},{286400,0}}})
+    {
+        World::StreamingWorld world(route);
+        world.update(distance);
+        const double anchor=std::clamp((static_cast<double>(world.currentChunk())+0.5)
+                                      *world.chunkLength(),0.0,route.lengthMetres());
+        sequential.build(route,world,anchor,quality,750);
+        parallel.build(route,world,anchor,quality,750);
+        REQUIRE(parallel.counters==sequential.counters);
+        REQUIRE(parallel.segments==sequential.segments);
+        for (std::size_t material=0; material<Render::kWorldMaterialCount; ++material)
+        {
+            const auto& a=parallel.meshes[material].data();
+            const auto& b=sequential.meshes[material].data();
+            REQUIRE(a.indices==b.indices);
+            REQUIRE(a.vertices.size()==b.vertices.size());
+            for (std::size_t i=0; i<a.vertices.size(); ++i)
+            {
+                REQUIRE(a.vertices[i].position==b.vertices[i].position);
+                REQUIRE(a.vertices[i].color==b.vertices[i].color);
+                REQUIRE(a.vertices[i].textureCoordinate==b.vertices[i].textureCoordinate);
+            }
+        }
+    }
+}
+
+TEST_CASE("oncoming vehicle meshes fit their coupled length and loading gauge")
+{
+    using namespace TrainSim;
+    using namespace TrainSim::Render;
+    for (std::size_t type = 0; type < static_cast<std::size_t>(World::OtherTrainType::Count);
+         ++type)
+    {
+        const World::OtherTrainConsist consist =
+            World::otherTrainConsist(static_cast<World::OtherTrainType>(type));
+        for (const World::OtherTrainVehicle& vehicle : consist.vehicles)
+        {
+            MeshBuilder builder;
+            addOtherTrainVehicle(builder,vehicle.kind);
+            const MeshData mesh = builder.take();
+            REQUIRE(!mesh.empty());
+            REQUIRE(mesh.indices.size()%3 == 0);
+            REQUIRE(mesh.indices.size() < 60'000);
+            float minZ = 1e9f, maxZ = -1e9f, maxY = 0.0f;
+            for (const LitColorVertex& v : mesh.vertices)
+            {
+                REQUIRE(std::abs(v.position.X) <= 1.50f);
+                REQUIRE(v.position.Y >= -0.001f);
+                REQUIRE(v.position.Y <= 5.87f);
+                REQUIRE(std::abs(v.normal.LengthSquared()-1.0f) < 1e-3f);
+                minZ = std::min(minZ,v.position.Z);
+                maxZ = std::max(maxZ,v.position.Z);
+                maxY = std::max(maxY,v.position.Y);
+            }
+            for (std::uint32_t index : mesh.indices) REQUIRE(index < mesh.vertices.size());
+            // Vehicles fill but never overlap their coupled spacing (DMU couplers may protrude
+            // by a few centimetres at the free cab end).
+            const float half = static_cast<float>(vehicle.lengthMetres*0.5);
+            REQUIRE(maxZ <= half+0.08f);
+            REQUIRE(minZ >= -half-0.08f);
+            REQUIRE(maxZ-minZ > static_cast<float>(vehicle.lengthMetres)-0.9f);
+            REQUIRE(maxY > 2.8f);
+        }
+    }
+    // Electric locomotives and the regional motor car reach the contact wire; others do not.
+    const auto top = [](World::OtherVehicleKind kind) {
+        MeshBuilder builder;
+        addOtherTrainVehicle(builder,kind);
+        float maxY = 0.0f;
+        for (const LitColorVertex& v : builder.data().vertices) maxY = std::max(maxY,v.position.Y);
+        return maxY;
+    };
+    REQUIRE(top(World::OtherVehicleKind::EmuMotorCar) > 5.8f);
+    REQUIRE(top(World::OtherVehicleKind::IntercityLocomotive) > 5.8f);
+    REQUIRE(top(World::OtherVehicleKind::FreightLocomotive) > 5.8f);
+    REQUIRE(top(World::OtherVehicleKind::DieselLeadingCar) < 4.3f);
+    REQUIRE(top(World::OtherVehicleKind::TankWagon) < 4.0f);
+    REQUIRE(otherVehicleIsFreightWagon(World::OtherVehicleKind::OpenWagon));
+    REQUIRE(!otherVehicleIsFreightWagon(World::OtherVehicleKind::FreightLocomotive));
+    REQUIRE(otherVehicleIsLocomotive(World::OtherVehicleKind::FreightLocomotive));
+
+    // Leading ends carry white headlights at +Z, trailing cab cars red tail lamps at -Z.
+    const auto litAt = [](World::OtherVehicleKind kind,std::uint32_t colour,float sign) {
+        MeshBuilder builder;
+        addOtherTrainVehicle(builder,kind);
+        for (const LitColorVertex& v : builder.data().vertices)
+            if (v.color == colour && v.position.Z*sign > 8.0f) return true;
+        return false;
+    };
+    const std::uint32_t white = Color(244,246,228,255).getPackedValueProperty();
+    const std::uint32_t red = Color(214,38,34,255).getPackedValueProperty();
+    REQUIRE(litAt(World::OtherVehicleKind::IntercityLocomotive,white,1.0f));
+    REQUIRE(!litAt(World::OtherVehicleKind::IntercityLocomotive,white,-1.0f));
+    REQUIRE(litAt(World::OtherVehicleKind::DieselLeadingCar,white,1.0f));
+    REQUIRE(litAt(World::OtherVehicleKind::DieselTrailingCar,red,-1.0f));
+    REQUIRE(!litAt(World::OtherVehicleKind::DieselTrailingCar,white,1.0f));
+    REQUIRE(litAt(World::OtherVehicleKind::IntercityTailCoach,red,-1.0f));
+    REQUIRE(!litAt(World::OtherVehicleKind::IntercityCoach,red,-1.0f));
+}
+
+TEST_CASE("the default clock and clear weather reproduce the fixed daylight exactly")
+{
+    using namespace TrainSim;
+    using namespace TrainSim::Render;
+    const SunPosition reference = sunPosition(Sim::kDefaultServiceStartHours);
+    REQUIRE(reference.azimuthOffset == 0.0);
+    REQUIRE(shadowCastingPosition(reference) == reference);
+    for (double heading : {0.0,0.7,-2.1,3.0})
+    {
+        const Vector3 a = sunRayDirection(heading,reference), b = daylightDirection(heading);
+        REQUIRE(a.X == b.X);
+        REQUIRE(a.Y == b.Y);
+        REQUIRE(a.Z == b.Z);
+    }
+    const Atmosphere air = atmosphere(Sim::kDefaultServiceStartHours,{});
+    const ExteriorLighting clear = exteriorLighting(0.0f);
+    REQUIRE(air.light.ambient == clear.ambient);
+    REQUIRE(air.light.diffuse == clear.diffuse);
+    REQUIRE(air.light.bounce == clear.bounce);
+    REQUIRE(air.light.uplight == clear.uplight);
+    REQUIRE(air.keyLight == reference);
+    for (float tunnel : {0.0f,0.4f,1.0f})
+    {
+        const ExteriorLighting mixed = exteriorLighting(tunnel,air.light);
+        const ExteriorLighting fixed = exteriorLighting(tunnel);
+        REQUIRE(mixed.ambient == fixed.ambient);
+        REQUIRE(mixed.diffuse == fixed.diffuse);
+    }
+    REQUIRE(air.fogStart == 360.0f);
+    REQUIRE(air.fogEnd == 1'050.0f);
+    const Color fog = daylightSkyColor(0);
+    REQUIRE(air.fogColour == Vector3(static_cast<float>(fog.getRProperty())/255.0f,
+                                     static_cast<float>(fog.getGProperty())/255.0f,
+                                     static_cast<float>(fog.getBProperty())/255.0f));
+    REQUIRE(air.shadowStrength == 1.0f);
+    REQUIRE(air.direct == 1.0f);
+    REQUIRE(air.night == 0.0f);
+    REQUIRE(air.sunDisc == 1.0f);
+    REQUIRE(air.cloudTint == Vector3::One);
+    REQUIRE(air.sunTint == Vector3::One);
+    REQUIRE(stationLighting(air).ambient == clear.ambient);
+
+    // The generalised sky builder emits the original daylight sky vertex for vertex.
+    MeshBuilder fixedSky, palettedSky;
+    addDaylightSky(fixedSky,1'070.0f);
+    addAtmosphereSky(palettedSky,1'070.0f,air.sky,Vector3{0.4f,0.0f,-0.3f});
+    REQUIRE(fixedSky.data().indices == palettedSky.data().indices);
+    REQUIRE(fixedSky.data().vertices.size() == palettedSky.data().vertices.size());
+    for (std::size_t i = 0; i < fixedSky.data().vertices.size(); ++i)
+    {
+        REQUIRE(fixedSky.data().vertices[i].position == palettedSky.data().vertices[i].position);
+        REQUIRE(fixedSky.data().vertices[i].color == palettedSky.data().vertices[i].color);
+    }
+}
+
+TEST_CASE("the sun crosses the sky and night, dusk and weather change the atmosphere")
+{
+    using namespace TrainSim;
+    using namespace TrainSim::Render;
+    // Continuous elevation through the day and night; highest after midday, lowest after midnight.
+    double previous = sunPosition(0.0).elevation;
+    double highest = -10.0, lowest = 10.0, highHour = 0.0, lowHour = 0.0;
+    for (double hours = 0.05; hours < 24.0; hours += 0.05)
+    {
+        const double elevation = sunPosition(hours).elevation;
+        REQUIRE(std::abs(elevation-previous) < 0.03);
+        if (elevation > highest) { highest = elevation; highHour = hours; }
+        if (elevation < lowest) { lowest = elevation; lowHour = hours; }
+        previous = elevation;
+    }
+    REQUIRE(highest > 1.2 && highest < 1.35);
+    REQUIRE(std::abs(highHour-13.0) < 0.2);
+    REQUIRE(lowest < -0.3);
+    REQUIRE(std::abs(lowHour-1.0) < 0.2);
+    REQUIRE(sunPosition(4.4).elevation < 0.0);
+    REQUIRE(sunPosition(4.6).elevation > 0.0);
+    REQUIRE(sunPosition(21.6).elevation < 0.0);
+    for (double hours : {0.5,6.0,13.0,19.5,22.0})
+    {
+        const SunPosition cast = shadowCastingPosition(sunPosition(hours));
+        REQUIRE(cast.elevation >= 25.0*3.14159265/180.0-1e-9);
+        // The key light never shines up from below the horizon.
+        const Atmosphere air = atmosphere(hours,{});
+        REQUIRE(sunRayDirection(0.3,air.keyLight).Y < -0.3f);
+    }
+
+    const Atmosphere day = atmosphere(13.0,{});
+    const Atmosphere dusk = atmosphere(21.35,{});
+    const Atmosphere night = atmosphere(0.5,{});
+    REQUIRE(night.night == 1.0f);
+    REQUIRE(night.light.ambient.X < 0.12f && night.light.ambient.Z < 0.16f);
+    REQUIRE(night.light.diffuse.Y < day.light.diffuse.Y*0.25f);
+    REQUIRE(night.sky.stars > 0.9f);
+    REQUIRE(night.sunDisc == 0.0f);
+    REQUIRE(night.moonDisc > 0.9f);
+    REQUIRE(night.sky.zenith.Z < 30.0f);
+    REQUIRE(stationLighting(night).ambient.X > night.light.ambient.X*3.0f);
+    REQUIRE(dusk.sky.glow.X > 10.0f);
+    REQUIRE(dusk.night > 0.0f && dusk.night < 1.0f);
+    // Golden light: warmer (relatively less blue) than midday.
+    REQUIRE(dusk.light.diffuse.Z/dusk.light.diffuse.X < day.light.diffuse.Z/day.light.diffuse.X);
+    REQUIRE(dusk.shadowStrength < 1.0f);
+    REQUIRE(day.night == 0.0f);
+
+    const Atmosphere overcast = atmosphere(13.0,Sim::weatherConditions(Sim::Weather::Overcast));
+    REQUIRE(overcast.direct < 0.2f);
+    REQUIRE(overcast.shadowStrength < 0.5f);
+    REQUIRE(overcast.sunDisc == 0.0f);
+    REQUIRE(overcast.light.diffuse.X < day.light.diffuse.X*0.2f);
+    REQUIRE(overcast.light.ambient.X > day.light.ambient.X);
+    // A grey sky: the zenith is far less blue-dominant than the clear one.
+    REQUIRE(overcast.sky.zenith.Z-overcast.sky.zenith.X < 25.0f);
+    const Atmosphere fog = atmosphere(13.0,Sim::weatherConditions(Sim::Weather::Fog));
+    REQUIRE(fog.fogEnd < 300.0f);
+    REQUIRE(fog.fogStart < 40.0f);
+    const Atmosphere rain = atmosphere(13.0,Sim::weatherConditions(Sim::Weather::Rain));
+    REQUIRE(rain.rain == 1.0f);
+    REQUIRE(rain.fogEnd < 700.0f);
+    REQUIRE(rain.light.ambient.X < overcast.light.ambient.X);
+    REQUIRE(rain.cloudTint.X < overcast.cloudTint.X);
+
+    // Sky palettes rebuild only on a visible change; stars appear only after dark.
+    REQUIRE(!skyPaletteChanged(day.sky,atmosphere(13.01,{}).sky));
+    REQUIRE(skyPaletteChanged(day.sky,night.sky));
+    MeshBuilder starry, daySky;
+    addAtmosphereSky(starry,1'070.0f,night.sky,Vector3::UnitX);
+    addAtmosphereSky(daySky,1'070.0f,day.sky,Vector3::UnitX);
+    REQUIRE(starry.data().vertices.size() == daySky.data().vertices.size()+320*4);
+    for (const auto& v : starry.data().vertices) REQUIRE(v.position.Length() < 1'071.0f);
+}
+
+TEST_CASE("night glow overlays copy only matching glazing and lamps and lit rooms are stable")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder vehicle;
+    vehicle.addBox(Vector3{-1,0,-1},Vector3{1,1,1},Color(43,79,96,255));      // Glass.
+    vehicle.addBox(Vector3{-1,2,-1},Vector3{1,3,1},Color(188,52,48,255));     // Body.
+    vehicle.addBox(Vector3{-0.1f,4,-0.1f},Vector3{0.1f,4.2f,0.1f},Color(214,38,34,255)); // Lamp.
+    const std::array<NightGlowMatch,2> matches{{
+        {Color(43,79,96,255),Color(214,198,156,255)},{Color(214,38,34,255),Color(255,44,30,255)}}};
+    const MeshData glow = nightGlowOverlay(vehicle.data(),matches);
+    // All six shaded faces of both matching boxes, none of the body.
+    REQUIRE(glow.indices.size() == 2*6*2*3);
+    for (const auto& v : glow.vertices)
+    {
+        REQUIRE(v.position.Y < 1.01f || v.position.Y > 3.9f);
+        REQUIRE(v.color == Color(214,198,156,255).getPackedValueProperty()
+                || v.color == Color(255,44,30,255).getPackedValueProperty());
+    }
+    // A lit room is a deterministic property of its seed, close to the intended two in five.
+    int lit = 0;
+    for (std::uint32_t seed = 0; seed < 20'000; ++seed)
+    {
+        lit += nightWindowLit(seed) ? 1 : 0;
+        REQUIRE(nightWindowLit(seed) == nightWindowLit(seed));
+    }
+    REQUIRE(lit > 7'800 && lit < 9'000);
+    MeshBuilder pool;
+    addLightPool(pool,Vector3{2,1,3},5.0f,Color(90,70,40,255));
+    REQUIRE(pool.data().indices.size() == 12*3);
+    for (const auto& v : pool.data().vertices)
+    {
+        REQUIRE(std::abs(v.position.Y-1.0f) < 1e-6f);
+        REQUIRE(Vector3::Distance(v.position,Vector3{2,1,3}) <= 5.0001f);
+        REQUIRE(v.normal.Y > 0.99f);
+    }
+}
+
+TEST_CASE("rain streaks stay outside the cars and window beads stay on their pane")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder rain;
+    REQUIRE(addRainStreaks(rain,600,7U) == 600);
+    REQUIRE(rain.data().indices.size() == 600*2*6);
+    for (const auto& v : rain.data().vertices)
+    {
+        REQUIRE(std::abs(v.position.X) > kRainCorridorHalfWidth);
+        REQUIRE(std::abs(v.position.X) < kRainTileHalfWidth+0.05f);
+        REQUIRE(v.position.Z > -0.05f && v.position.Z < kRainTileLength+0.05f);
+        REQUIRE(v.position.Y > -kRainTileHeight*0.5f-1.0f && v.position.Y < kRainTileHeight*0.5f);
+    }
+    MeshBuilder right;
+    addRainStreaks(right,200,9U,1.0f);
+    for (const auto& v : right.data().vertices) REQUIRE(v.position.X > kRainCorridorHalfWidth);
+    MeshBuilder beads;
+    const int added = addWindowDroplets(beads,1.4575f,0.88f,2.32f,-3.0f,-1.5f,11U);
+    REQUIRE(added > 40);
+    for (const auto& v : beads.data().vertices)
+    {
+        REQUIRE(v.position.X == 1.4575f);
+        REQUIRE(v.position.Y > 0.86f && v.position.Y < 2.34f);
+        REQUIRE(v.position.Z > -3.2f && v.position.Z < -1.45f);
+    }
+}
+
+TEST_CASE("night glow joins the streamed world and lit windows survive a new anchor")
+{
+    using namespace TrainSim;
+    const auto route = Sim::Route::NorthernValleyExpress();
+    World::StreamingWorld world(route);
+    world.update(192'400.0);
+    Render::WorldGeometry a(1), b(1);
+    const double anchor = (static_cast<double>(world.currentChunk())+0.5)*world.chunkLength();
+    a.build(route,world,anchor,2,750);
+    b.build(route,world,anchor+250.0,2,750);
+    const auto glow = static_cast<std::size_t>(Render::WorldMaterial::NightGlow);
+    REQUIRE(a.meshes[glow].data().indices.size() > 3'000);
+    // Same window set, different anchor: the lit selection must not reshuffle.
+    REQUIRE(a.meshes[glow].data().indices.size() == b.meshes[glow].data().indices.size());
+    // A low evening sun bakes different projected shadows but the same night glow.
+    Render::WorldGeometry evening(1);
+    evening.build(route,world,anchor,2,750,Render::shadowCastingPosition(Render::sunPosition(20.5)));
+    REQUIRE(evening.meshes[glow].data().indices == a.meshes[glow].data().indices);
+    const auto shadows = static_cast<std::size_t>(Render::WorldMaterial::Shadows);
+    REQUIRE(evening.meshes[shadows].data().vertices.size()
+            == a.meshes[shadows].data().vertices.size());
+    bool moved = false;
+    for (std::size_t i = 0; i < a.meshes[shadows].data().vertices.size() && !moved; ++i)
+        moved = !(evening.meshes[shadows].data().vertices[i].position
+                  == a.meshes[shadows].data().vertices[i].position);
+    REQUIRE(moved);
 }

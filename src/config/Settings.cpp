@@ -74,6 +74,10 @@ Settings Settings::parse(std::string_view text, Settings settings)
         else if (key == "vegetation_distance_metres")
             settings.vegetationDistanceMetres = std::clamp(value, 250.0f, 1'000.0f);
         else if (key == "announcement_captions") settings.announcementCaptions = value >= 0.5f;
+        else if (key == "service_start_minutes")
+            settings.serviceStartMinutes = std::clamp(static_cast<int>(std::lround(value)), 0, 1'439);
+        else if (key == "weather")
+            settings.weatherMode = std::clamp(static_cast<int>(std::lround(value)), 0, 5);
         else throw std::runtime_error("Unknown setting '" + key + "' on line "
                                       + std::to_string(lineNumber));
     }
@@ -108,7 +112,9 @@ std::string Settings::serialize() const
            << "field_of_view_degrees = " << fieldOfViewDegrees << '\n'
            << "graphics_quality = " << graphicsQuality << '\n'
            << "vegetation_distance_metres = " << vegetationDistanceMetres << '\n'
-           << "announcement_captions = " << (announcementCaptions ? 1 : 0) << '\n';
+           << "announcement_captions = " << (announcementCaptions ? 1 : 0) << '\n'
+           << "service_start_minutes = " << serviceStartMinutes << '\n'
+           << "weather = " << weatherMode << '\n';
     return output.str();
 }
 

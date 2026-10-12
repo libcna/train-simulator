@@ -84,7 +84,8 @@ use glazed terminal halls, Merefield and Stonebridge brick clock turrets, Hawtho
 Eastmere pedestrian bridges, Greenford Vale and Pine Crossing compact wind shelters, Lakehurst and
 Redwater waterfront edges, and Meadow Junction/Northbridge elevated concourses.
 Major stations also carry marked platform clocks whose hour and minute hands advance from the
-fictional 09:17 service-day start using simulated, not host, time.
+fictional 09:17 service-day start (configurable with `service_start_minutes` or `--time HH:MM`)
+using simulated, not host, time. The same clock drives the sun, twilight and night lighting.
 
 At either terminal, doors open for the terminal dwell, destination information remains coherent,
 the active direction reverses, doors close with warning audio, and the same double-ended consist

@@ -558,6 +558,14 @@ void MeshBuilder::addDiscXZ(const Vector3& centre, float radius, int sides, cons
     }
 }
 
+void MeshBuilder::append(const MeshData& other)
+{
+    const auto base=static_cast<std::uint32_t>(data_.vertices.size());
+    data_.vertices.insert(data_.vertices.end(),other.vertices.begin(),other.vertices.end());
+    data_.indices.reserve(data_.indices.size()+other.indices.size());
+    for (const auto index : other.indices) data_.indices.push_back(base+index);
+}
+
 std::vector<MeshSegment> meshSegments(const MeshData& data,std::size_t maxVertices)
 {
     if (data.empty()) return {};

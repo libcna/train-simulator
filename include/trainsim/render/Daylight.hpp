@@ -58,6 +58,18 @@ inline ExteriorLighting exteriorLighting(float tunnelMix)
             Vector3{0.17f,0.16f,0.13f}*(1-t)};
 }
 
+// Open-air lighting from the atmosphere (ENV-138/139) faded into the tunnel's fixed fill. With
+// the reference daylight it equals exteriorLighting(tunnelMix).
+inline ExteriorLighting exteriorLighting(float tunnelMix, const ExteriorLighting& open)
+{
+    using namespace Microsoft::Xna::Framework;
+    const float t=std::clamp(tunnelMix,0.0f,1.0f);
+    return {open.ambient*(1-t)+Vector3{0.40f,0.41f,0.43f}*t,
+            open.diffuse*(1-t)+Vector3{0.12f,0.12f,0.12f}*t,
+            open.bounce*(1-t),
+            open.uplight*(1-t)};
+}
+
 inline AvatarCabinLighting avatarCabinLighting(
     const Microsoft::Xna::Framework::Vector3& daylight, float tunnelMix)
 {

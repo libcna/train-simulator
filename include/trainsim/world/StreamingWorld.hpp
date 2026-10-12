@@ -36,6 +36,33 @@ inline constexpr double kHouseOutbuildingHalfLength=3.9;
     return (variant&1U)!=0U ? 1.0 : -1.0;
 }
 
+// Building plans (ENV-134). Houses and apartment blocks carry five variant bits: the lower three
+// keep their earlier meaning and bits 3-4 choose the plan. The railway-facing facade and the
+// entrance never move, so street access and frontage layout stay valid. Rear wings are only
+// built on rural houses, which have no planted plot.
+enum class HousePlan : std::uint8_t { Standard, Long, RearWing, Cottage };
+enum class BlockPlan : std::uint8_t { Slab, Terrace, Setback, Stepped };
+[[nodiscard]] constexpr HousePlan housePlan(std::uint32_t variant,double urbanity) noexcept
+{
+    const auto plan=static_cast<HousePlan>((variant>>3U)&3U);
+    return plan==HousePlan::RearWing && urbanity>=0.35 ? HousePlan::Standard : plan;
+}
+[[nodiscard]] constexpr BlockPlan blockPlan(std::uint32_t variant) noexcept
+{
+    return static_cast<BlockPlan>((variant>>3U)&3U);
+}
+// Main-body length along the route at scale one.
+[[nodiscard]] constexpr double houseLength(HousePlan plan) noexcept
+{
+    return plan==HousePlan::Long ? 13.0 : plan==HousePlan::Cottage ? 8.0 : 10.0;
+}
+[[nodiscard]] constexpr double blockLength(BlockPlan plan) noexcept
+{
+    return plan==BlockPlan::Terrace ? 19.0 : 13.0;
+}
+inline constexpr double kHouseRearWingDepth=5.2;   // Across the route, behind the main body.
+inline constexpr double kHouseRearWingLength=5.4;  // Along the route.
+
 struct WorldFeature
 {
     double routeDistance = 0.0;
@@ -86,12 +113,23 @@ public:
     [[nodiscard]] int radius() const noexcept { return radius_; }
     [[nodiscard]] double chunkLength() const noexcept { return chunkLength_; }
     [[nodiscard]] std::size_t generatedChunkCount() const noexcept { return generatedChunkCount_; }
+    // Oncoming services (ENV-137) whose consist can reach the drawn range. A service travels up
+    // to 950 m from its anchor chunk, so this list spans a wider window than the generated
+    // scenery; otherwise a train would appear beside the player as its anchor chunk streamed in.
+    // Anchors depend on the chunk index alone, so no extra chunk is generated for them.
+    [[nodiscard]] const std::vector<WorldFeature>& otherTrains() const noexcept
+    {
+        return otherTrains_;
+    }
+    static constexpr int kOtherTrainChunkRadius = 8;
     [[nodiscard]] double requiredLevelCrossingClosure(
         double crossingDistanceMetres, double trainDistanceMetres,
         double seconds) const noexcept;
 
 private:
     [[nodiscard]] Chunk generate(std::int64_t index, bool resolveVegetation = true) const;
+    [[nodiscard]] bool hasOtherTrain(std::int64_t index) const noexcept;
+    [[nodiscard]] WorldFeature otherTrainAnchor(std::int64_t index) const noexcept;
     [[nodiscard]] std::uint64_t hash(std::uint64_t value) const noexcept;
 
     const Sim::Route& route_;
@@ -100,6 +138,7 @@ private:
     std::int64_t currentChunk_ = -1;
     std::vector<Chunk> chunks_;
     std::vector<Chunk> nextChunksScratch_;
+    std::vector<WorldFeature> otherTrains_;
     std::size_t generatedChunkCount_ = 0;
 };
 

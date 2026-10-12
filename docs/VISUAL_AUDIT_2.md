@@ -186,3 +186,81 @@ from audit cameras; the passenger view of the cab through the bulkhead window is
 
 Avatar style remains the CNA catalog's; no seated clipping was seen in the populated frames.
 The capture harness keeps the interaction prompt visible with `--hide-hud`.
+
+## Owner goal list (2026-10-12 evening): ENV-134 to ENV-139
+
+These items come from the owner's goal list rather than from the pass-2 screenshots (faster world
+preparation, split `SceneRenderer`, building floor plans, busier platforms, more oncoming train
+types, time of day and weather). ENV-135 is unassigned. They are features, so there is no historical
+`before` binary for most of them; evidence is the inspected `after` captures, unit tests, CTest
+smokes and performance samples below. PERF-003 (parallel world build) is in `docs/STREAMING.md`.
+
+| ID | Status | What changed | Evidence |
+| --- | --- | --- | --- |
+| ENV-134 | ADDRESSED | Houses and blocks draw one of four plans each from variant bits 3-4: house Standard / Long / RearWing (rural only) / hipped Cottage; block Slab / Terrace / Setback / Stepped penthouse. Parcels and street pockets use the plan length. | `tools/capture_plans_platforms.sh` (`plans-*`), counters `house_rear_wings`, `block_penthouses` |
+| ENV-136 | ADDRESSED | Station-family bench styles, help point, two validators, vending machine (major) or cycle stands, luggage trolley (major/terminal), an open-front rural wind shelter, a 24-visual platform pool with three bench-seated figures, two travellers with suitcases and a timetable reader. | `capture_plans_platforms.sh` (`platform-station-4/5/9/12`), counters `platform_amenities`, `platform_seated`, `platform_suitcases` |
+| ENV-137 | ADDRESSED | Four oncoming consist types (regional EMU, locomotive-hauled intercity, 200 m freight, two-car diesel unit) with their own speeds and passing sound; parked regional or diesel units; an oncoming-traffic window wider than the scenery window. | `tools/capture_oncoming_trains.sh` (`oncoming-*`), counters `other_train_locomotives`, `other_train_freight_wagons`, smokes `trainsim_freight_pass_view_smoke`, `trainsim_traffic_window_view_smoke` |
+| ENV-138 | ADDRESSED | Time of day from the service clock: moving sun, golden light, twilight glow, stars and moon; lit windows, street/platform lamp glow and light pools, floodlit platforms, glowing signals and lit oncoming-train windows at night. | `tools/capture_time_weather.sh` (`time-weather-*`), smoke `trainsim_night_environment_smoke` |
+| ENV-139 | ADDRESSED | Weather: clear, cloudy, overcast, rain, fog and a gradual changing itinerary; grey sky and diffuse light, faded shadows, closer fog, rain streaks, window beads and rain ambience. | `capture_time_weather.sh`, smoke `trainsim_rain_environment_smoke` |
+
+### Building floor plans: ENV-134
+
+`housePlan`/`blockPlan` (`StreamingWorld.hpp`) decode the plan; `FacadeGeometry.hpp` and
+`WorldGeometryBuild.cpp` build the long body, the rural rear wing, the hipped cottage roof, the
+terrace, the set-back upper storey and the stepped penthouse while keeping the railway-facing
+facade and the entrance, so street access is unchanged. Inspected: `plans-km2-left`, `-right`,
+`plans-km60`, `plans-km163`, `plans-town-aerial`, `plans-country-aerial`. Limit: all plans still
+share one punched-window module.
+
+### Busier platforms: ENV-136
+
+All new fixtures are registered in `platformFixturesClear`, so waiting figures keep their
+clearance. Two defects found in the earlier probes were repaired (the solid rural wind shelter
+that bench B cut through; suitcases intersecting the traveller's hand). This session found a third
+in the formal captures: at major stations and termini the vending machine stood at +12.6 m,
+directly in front of the departure board (+13.6 to +14.9 m) as seen from the train, hiding its
+destination. It now stands at +25.4 m; the recaptured `platform-station-9` and `-12` frames show
+the board unobstructed. Station 5 performance sample with 24 ready visuals: p95 26.1 ms,
+p99 26.5 ms (compositor cadence).
+
+### Oncoming train types: ENV-137
+
+`World::OtherTrainConsist` (`OtherTrainConsist.hpp`) lists each type's vehicles, lengths, cab
+ends and speed (EMU 31 m/s, intercity 38, freight 25, diesel 28). The phase stays in variant
+bits 0-1 and the type sits above them, chosen from the service ordinal (every 37th chunk) so the
+established pass-by fixtures (ordinals 1 and 29) remain regional units. `OtherTrainGeometry.hpp`
+builds one complete mesh per vehicle kind (the old shell plus pantograph/cab overlays became
+three EMU car meshes). Level crossings stay closed until the nearest vehicle, not the consist
+centre, has cleared, and the passing sound follows the vehicle nearest the listener.
+
+Defect found and repaired: a service exists only while its anchor chunk is loaded (three chunks
+each side), yet it travels up to 950 m from that anchor, so it could appear beside the player as
+the anchor chunk streamed in. `StreamingWorld::otherTrains()` now lists services within eight
+chunks (anchors depend on the chunk index alone, so nothing extra is generated); rendering, audio
+and crossings use it. Inspected: front, side, centre, rear, elevated and window views of all four
+types and the parked diesel unit at Meadow Junction. Window-view performance beside the 12-vehicle
+freight: p95 26.0 ms, p99 26.3 ms. Remaining limit: a service still appears or vanishes at the
+ends of its 1.9 km traversal, which can be within view of a player near those points.
+
+### Time of day and weather: ENV-138 / ENV-139
+
+`Sim::Environment` gives the clock (`serviceClockHours`) and continuous `WeatherConditions`;
+`Render::Atmosphere` turns them into sun/moon position, exterior light, sky palette, fog,
+shadow strength, cloud tint and night factor. The sun model is calibrated so the default 09:17
+clear start reproduces the earlier fixed sun, light, sky mesh and fog bit for bit (unit test);
+a full recapture of the oncoming set showed zero differing pixels on its static views. Projected
+shadows are baked per streamed window from the sun in whole-degree steps (never below 25 degrees)
+and their strength fades at draw time. Night glow is a separate additive world material
+(`WorldMaterial::NightGlow`): lit rooms are chosen per building from its absolute identity, so a
+window stays lit or dark across streamed windows (unit test).
+
+Inspected matched poses (window, exterior, station, urban, freight) at 06:50, 13:00, 20:45,
+21:35 and 23:30 and in each weather at 13:00, plus rain at night. Defects found in the first
+captures and repaired: tree leaf sprays (an unlit effect) stayed bright at dusk and night, now
+tinted by the atmosphere; window beads drew as large bright triangles, now smaller and fainter;
+rain fell under platform canopies, now the platform side is skipped beside a station. Moving
+8x rides from km 52 (1,800 frames): default p95 25.6 / p99 25.9 ms, night 25.7 / 29.5, rain
+25.7 / 26.2, changing 25.7 / 26.1, all with 45 prepared swaps and no late preparation; stationary
+samples stayed at the compositor cadence. Limits: no wet surfaces, puddles, snow or lightning;
+the player train's exterior keeps saloon lighting at night (audit cameras only); rain streaks
+are a camera-local field.

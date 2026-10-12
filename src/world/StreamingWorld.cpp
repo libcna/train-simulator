@@ -1,4 +1,5 @@
 #include "trainsim/world/StreamingWorld.hpp"
+#include "trainsim/world/OtherTrainConsist.hpp"
 #include "trainsim/world/StreetLayout.hpp"
 #include "trainsim/world/StationSite.hpp"
 
@@ -13,7 +14,6 @@ namespace TrainSim::World {
 
 namespace {
 constexpr double kSignalBlockMetres = 500.0;
-constexpr double kOtherTrainSpeedMetresPerSecond = 31.0;
 constexpr double kOtherTrainHalfTraversalMetres = 950.0;
 constexpr double kOtherTrainTraversalMetres = kOtherTrainHalfTraversalMetres * 2.0;
 constexpr double kOtherTrainHiddenResetMetres = 310.0;
@@ -45,9 +45,11 @@ double otherTrainPhase(const WorldFeature& feature, double seconds) noexcept
     // Variant one puts chunk 37's service beside the default rear-car player position in the
     // established pass-by smoke. Variant two makes the far-route integration fixture protect a
     // nearby level crossing even while the player's train is outside its closure envelope.
+    // Each consist type runs at its own speed; the offsets stay in metres along the cycle.
     constexpr std::array<double,3> phaseOffsets = {0.0,738.0,1'350.0};
-    return std::fmod(safeSeconds * kOtherTrainSpeedMetresPerSecond
-                     + phaseOffsets[feature.variant%phaseOffsets.size()],
+    const double speed = otherTrainConsist(otherTrainType(feature.variant)).speedMetresPerSecond;
+    return std::fmod(safeSeconds * speed
+                     + phaseOffsets[otherTrainPhaseVariant(feature.variant)%phaseOffsets.size()],
                      kOtherTrainCycleMetres);
 }
 }
@@ -111,16 +113,19 @@ double StreamingWorld::requiredLevelCrossingClosure(
 {
     double requiredClosure = levelCrossingClosureAmount(
         crossingDistanceMetres,trainDistanceMetres);
-    // The same bounded seven-chunk traffic window drives rendering and audio. An opposing train
+    // The same bounded traffic window drives rendering and audio. An opposing train
     // can therefore protect the road even while the passenger service is outside the envelope.
-    for (const Chunk& chunk : chunks_)
-        for (const WorldFeature& feature : chunk.features)
+    for (const WorldFeature& feature : otherTrains_)
         {
-            if (feature.kind != FeatureKind::OtherTrain
-                || !movingOtherTrainVisible(feature,seconds,route_.lengthMetres())) continue;
+            if (!movingOtherTrainVisible(feature,seconds,route_.lengthMetres())) continue;
+            // Protect the road from the nearest vehicle, so a long freight's tail still
+            // clears the crossing before the barriers rise.
+            const double centre = movingOtherTrainDistance(feature,seconds,route_.lengthMetres());
+            const double halfLength =
+                otherTrainConsist(otherTrainType(feature.variant)).lengthMetres()*0.5;
             requiredClosure = std::max(requiredClosure,levelCrossingClosureAmount(
                 crossingDistanceMetres,
-                movingOtherTrainDistance(feature,seconds,route_.lengthMetres())));
+                std::clamp(crossingDistanceMetres,centre-halfLength,centre+halfLength)));
         }
     return requiredClosure;
 }
@@ -434,7 +439,10 @@ Chunk StreamingWorld::generate(std::int64_t index, bool resolveVegetation) const
         // buildings form a second depth layer instead of intersecting those front gardens.
         const double frontageSetback = pose.urbanity > 0.45 ? 44.0 : 32.0;
         const double lateral = side*(frontageSetback+halfWidth+lateralRoll*28.0);
-        const std::uint32_t variant = static_cast<std::uint32_t>(random() % 8ULL);
+        // Houses and blocks keep the same low three bits as before and add two plan bits.
+        const auto roll = random();
+        const std::uint32_t variant = static_cast<std::uint32_t>(
+            kind == FeatureKind::Warehouse ? roll % 8ULL : roll % 32ULL);
         const Sim::RoutePose featurePose = route_.sample(buildingDistance);
         if (terrainFeatureAllowed(featurePose,lateral))
             chunk.features.push_back({kind,buildingDistance,lateral,buildingScale,variant});
@@ -614,9 +622,7 @@ Chunk StreamingWorld::generate(std::int64_t index, bool resolveVegetation) const
     chunk.features.push_back({FeatureKind::Signal, chunk.endDistance - 20.0,
                               facesIncreasingDistance ? 3.4 : -3.4, 1.0,
                               facesIncreasingDistance ? 0U : 1U});
-    if (index > 0 && index % 37 == 0)
-        chunk.features.push_back({FeatureKind::OtherTrain, chunk.beginDistance + 80.0,
-                                  -5.0, 1.0, static_cast<std::uint32_t>(index % 3)});
+    if (hasOtherTrain(index)) chunk.features.push_back(otherTrainAnchor(index));
     // Last endpoint chunks may contain samples beyond the nominal route end.
     // Keep their decorative parcels out of the authored terminal public apron.
     std::erase_if(chunk.features,[&](const WorldFeature& feature) {
@@ -635,9 +641,16 @@ Chunk StreamingWorld::generate(std::int64_t index, bool resolveVegetation) const
         double halfLength = 0.0;
         switch (feature.kind)
         {
-            case FeatureKind::House: halfWidth=5.0; halfLength=6.2; break;
+            case FeatureKind::House:
+            {
+                const auto plan=housePlan(feature.variant,route_.sample(feature.routeDistance).urbanity);
+                halfWidth=plan==HousePlan::RearWing ? 3.5+kHouseRearWingDepth+1.5 : 5.0;
+                halfLength=std::max(6.2,houseLength(plan)*0.5+1.2);
+                break;
+            }
             case FeatureKind::Townhouse: halfWidth=4.3; halfLength=5.7; break;
-            case FeatureKind::Apartment: halfWidth=6.4; halfLength=7.8; break;
+            case FeatureKind::Apartment:
+                halfWidth=6.4; halfLength=std::max(7.8,blockLength(blockPlan(feature.variant))*0.5+1.3); break;
             case FeatureKind::Tower: halfWidth=8.8; halfLength=10.5; break;
             case FeatureKind::Warehouse: halfWidth=10.0; halfLength=13.0; break;
             case FeatureKind::Farmstead: halfWidth=14.0; halfLength=16.0; break;
@@ -721,6 +734,19 @@ Chunk StreamingWorld::generate(std::int64_t index, bool resolveVegetation) const
     return chunk;
 }
 
+bool StreamingWorld::hasOtherTrain(std::int64_t index) const noexcept
+{
+    const auto maxChunk = static_cast<std::int64_t>(std::floor(route_.lengthMetres() / chunkLength_));
+    return index > 0 && index <= maxChunk && index % 37 == 0;
+}
+
+WorldFeature StreamingWorld::otherTrainAnchor(std::int64_t index) const noexcept
+{
+    return {FeatureKind::OtherTrain, static_cast<double>(index) * chunkLength_ + 80.0, -5.0, 1.0,
+            otherTrainVariant(static_cast<std::uint32_t>(index % 3),
+                              otherTrainTypeForOrdinal(index / 37))};
+}
+
 void StreamingWorld::update(double trainDistanceMetres)
 {
     const auto maxChunk = static_cast<std::int64_t>(std::floor(route_.lengthMetres() / chunkLength_));
@@ -752,6 +778,10 @@ void StreamingWorld::update(double trainDistanceMetres)
         }
     }
     chunks_.swap(nextChunksScratch_);
+    otherTrains_.clear();
+    for (std::int64_t index = currentChunk_ - kOtherTrainChunkRadius;
+         index <= currentChunk_ + kOtherTrainChunkRadius; ++index)
+        if (hasOtherTrain(index)) otherTrains_.push_back(otherTrainAnchor(index));
 }
 
 } // namespace TrainSim::World

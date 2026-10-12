@@ -84,6 +84,8 @@ TEST_CASE("settings serialize every value for a stable round trip")
     original.graphicsQuality = 1;
     original.vegetationDistanceMetres = 640.0f;
     original.announcementCaptions = false;
+    original.serviceStartMinutes = 19*60 + 45;
+    original.weatherMode = 5;
 
     const Settings restored = Settings::parse(original.serialize());
     REQUIRE(std::abs(restored.mouseSensitivity - original.mouseSensitivity) < 1e-6f);
@@ -93,6 +95,8 @@ TEST_CASE("settings serialize every value for a stable round trip")
     REQUIRE(std::abs(restored.trainVolume - original.trainVolume) < 1e-6f);
     REQUIRE(std::abs(restored.cameraVibration - original.cameraVibration) < 1e-6f);
     REQUIRE(std::abs(restored.fieldOfViewDegrees - original.fieldOfViewDegrees) < 1e-6f);
+    REQUIRE(restored.serviceStartMinutes == original.serviceStartMinutes);
+    REQUIRE(restored.weatherMode == original.weatherMode);
     REQUIRE(restored.graphicsQuality == original.graphicsQuality);
     REQUIRE(std::abs(restored.vegetationDistanceMetres
                      - original.vegetationDistanceMetres) < 1e-6f);

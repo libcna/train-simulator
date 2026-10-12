@@ -1,6 +1,8 @@
 #include "trainsim/audio/TrainAudio.hpp"
 
+#include "trainsim/sim/Environment.hpp"
 #include "trainsim/sim/TrainInterior.hpp"
+#include "trainsim/world/OtherTrainConsist.hpp"
 #include "trainsim/world/StreamingWorld.hpp"
 
 #include "Microsoft/Xna/Framework/Audio/AudioEmitter.hpp"
@@ -101,6 +103,9 @@ public:
             toiletDoorEffect_ = load(assetDirectory / "toilet_door.wav");
             passingTrainEffect_ = load(assetDirectory / "passing_train.wav");
             crossingWarningEffect_ = load(assetDirectory / "crossing_warning.wav");
+            // Optional so asset directories from before ENV-139 still play everything else.
+            if (std::filesystem::exists(assetDirectory / "rain.wav"))
+                rainEffect_ = load(assetDirectory / "rain.wav");
             for (const char* name : {"footstep_carpet_01.wav", "footstep_carpet_02.wav"})
                 carpetFootstepEffects_.push_back(load(assetDirectory / name));
             for (const char* name : {"footstep_vestibule_01.wav", "footstep_vestibule_02.wav"})
@@ -144,6 +149,7 @@ public:
             crossingWarning_ = makeSpatialLoop(*crossingWarningEffect_);
             stationAmbience_ = makeLoop(*stationAmbienceEffect_, 0.0f);
             interiorHvac_ = makeLoop(*interiorHvacEffect_, 0.0f);
+            if (rainEffect_) rain_ = makeLoop(*rainEffect_, 0.0f);
             available_ = true;
         }
         catch (const std::exception& error)
@@ -251,6 +257,9 @@ public:
             ? std::string_view(pendingAnnouncement_->caption) : std::string_view{};
     }
 
+    void setWeather(Sim::WeatherMode mode) noexcept { weatherMode_ = mode; }
+    [[nodiscard]] float rainLevel() const noexcept { return rainMix_; }
+
     void setSettings(TrainAudioSettings settings)
     {
         settings.masterVolume = std::clamp(settings.masterVolume, 0.0f, 1.0f);
@@ -339,6 +348,11 @@ public:
             bridgeMix_ += (onBridge ? 1.0f : -1.0f)
                         * static_cast<float>(realSeconds) * 1.6f;
             bridgeMix_ = std::clamp(bridgeMix_, 0.0f, 1.0f);
+            // Rain on the roof and glazing, muted in tunnels and following weather changes.
+            const float rainTarget = Sim::weatherConditions(
+                weatherMode_,state.serviceElapsedSeconds).rain*(inTunnel ? 0.0f : 1.0f);
+            rainMix_ += std::clamp(rainTarget-rainMix_,-static_cast<float>(realSeconds)*0.5f,
+                                   static_cast<float>(realSeconds)*0.5f);
             const bool platformOpen = state.phase == Sim::ServicePhase::Dwelling && state.doorsOpen;
             stationMix_ += (platformOpen ? 1.0f : -1.0f)
                          * static_cast<float>(realSeconds) * 0.65f;
@@ -469,14 +483,15 @@ public:
     }
 
 private:
-    [[nodiscard]] std::array<XnaAudio::SoundEffectInstance*,21> instances() const noexcept
+    [[nodiscard]] std::array<XnaAudio::SoundEffectInstance*,22> instances() const noexcept
     {
         return {rolling_.get(), traction_.get(), wind_.get(), tunnel_.get(), bridge_.get(),
                 braking_.get(), curveSqueal_.get(), railTexture_.get(), gangwayRattle_.get(),
                 gangwayDoor_.get(), toiletDoor_.get(), passingTrain_.get(),
                 crossingWarning_.get(), footstep_.get(), murmur_.get(),
                 stationAmbience_.get(), interiorHvac_.get(), doorInstance_.get(),
-                doorWarningInstance_.get(), announcementChime_.get(), announcement_.get()};
+                doorWarningInstance_.get(), announcementChime_.get(), announcement_.get(),
+                rain_.get()};
     }
 
     [[nodiscard]] std::size_t instanceCount(XnaAudio::SoundState wanted) const noexcept
@@ -515,6 +530,8 @@ private:
             stationMix_ * 0.12f * mix*(1.0f-0.55f*announcementDuck_));
         interiorHvac_->setVolumeProperty(
             (0.075f+0.025f*(1.0f-stationMix_))*bed);
+        // Louder through open platform doors than through the closed bodyshell.
+        if (rain_) rain_->setVolumeProperty(rainMix_*(0.09f+0.10f*stationMix_)*mix);
     }
 
     void positionGangway(float playerX, float playerZ, float playerYaw)
@@ -633,45 +650,52 @@ private:
             stop(passingTrain_);
         if (passingTrainCooldown_ > 0.0 || passingTrainEffect_ == nullptr) return;
 
-        for (const World::Chunk& chunk : world.chunks())
+        for (const World::WorldFeature& feature : world.otherTrains())
         {
-            for (const World::WorldFeature& feature : chunk.features)
-            {
-                if (feature.kind != World::FeatureKind::OtherTrain) continue;
-                if (!World::movingOtherTrainVisible(
-                        feature,elapsed_,route.lengthMetres())) continue;
-                const double routeDistance = World::movingOtherTrainDistance(
-                    feature,elapsed_,route.lengthMetres());
-                const Sim::RelativeRoutePose relative = route.relativePose(
-                    service.state().routeDistanceMetres,routeDistance);
-                const double lateral = route.parallelTrackLateralMetres(routeDistance);
-                const double cosine = std::cos(relative.headingRadians);
-                const double sine = std::sin(relative.headingRadians);
-                const float emitterX = static_cast<float>(relative.x+lateral*cosine);
-                const float emitterZ = static_cast<float>(relative.z-lateral*sine);
-                // The source represents a three-car consist rather than a point. Its 28 m
-                // half-length starts the pressure envelope as a leading car reaches the listener
-                // and keeps the event stable across a long offscreen frame without making a
-                // distant parallel service sound close.
-                if (std::abs(emitterZ-static_cast<double>(playerZ)) > 28.0) continue;
+            if (!World::movingOtherTrainVisible(
+                    feature,elapsed_,route.lengthMetres())) continue;
+            const double routeDistance = World::movingOtherTrainDistance(
+                feature,elapsed_,route.lengthMetres());
+            const Sim::RelativeRoutePose relative = route.relativePose(
+                service.state().routeDistanceMetres,routeDistance);
+            const double lateral = route.parallelTrackLateralMetres(routeDistance);
+            const double cosine = std::cos(relative.headingRadians);
+            const double sine = std::sin(relative.headingRadians);
+            const float emitterX = static_cast<float>(relative.x+lateral*cosine);
+            const float centreZ = static_cast<float>(relative.z-lateral*sine);
+            // The source represents the whole consist rather than a point. Its half-length
+            // (28.5 m for the regional unit, about 100 m for a freight) starts the pressure
+            // envelope as the leading vehicle reaches the listener and keeps the event stable
+            // across a long offscreen frame without making a distant service sound close.
+            // The emitter follows the vehicle nearest the listener along the consist.
+            const World::OtherTrainType type = World::otherTrainType(feature.variant);
+            const float halfLength = static_cast<float>(
+                World::otherTrainConsist(type).lengthMetres()*0.5);
+            if (std::abs(centreZ-playerZ) > halfLength) continue;
+            const float emitterZ = std::clamp(playerZ,centreZ-halfLength,centreZ+halfLength);
 
-                passingTrain_ = std::make_unique<XnaAudio::SoundEffectInstance>(
-                    passingTrainEffect_->CreateInstance());
-                passingTrain_->setVolumeProperty(0.34f*settings_.trainVolume);
-                passingTrain_->setPitchProperty(-0.06f
-                    + static_cast<float>(feature.variant%3U)*0.045f);
-                XnaAudio::AudioListener listener;
-                listener.setPositionProperty(Vector3(playerX,1.55f,playerZ));
-                listener.setForwardProperty(Vector3(
-                    std::sin(playerYaw),0.0f,-std::cos(playerYaw)));
-                XnaAudio::AudioEmitter emitter;
-                emitter.setPositionProperty(Vector3(emitterX,1.15f,emitterZ));
-                passingTrain_->Apply3D(listener,emitter);
-                passingTrain_->Play();
-                passingTrainCooldown_ = 8.0;
-                ++passingTrainEventCount_;
-                return;
-            }
+            passingTrain_ = std::make_unique<XnaAudio::SoundEffectInstance>(
+                passingTrainEffect_->CreateInstance());
+            // Freight runs heavier and lower; the intercity is quicker and brighter.
+            const float typeVolume = type == World::OtherTrainType::Freight ? 0.42f : 0.34f;
+            const float typePitch = type == World::OtherTrainType::Freight ? -0.16f
+                                  : type == World::OtherTrainType::Intercity ? 0.05f
+                                  : type == World::OtherTrainType::DieselUnit ? -0.08f : 0.0f;
+            passingTrain_->setVolumeProperty(typeVolume*settings_.trainVolume);
+            passingTrain_->setPitchProperty(std::clamp(-0.06f + typePitch
+                + static_cast<float>(World::otherTrainPhaseVariant(feature.variant)%3U)*0.045f,
+                -1.0f,1.0f));
+            XnaAudio::AudioListener listener;
+            listener.setPositionProperty(Vector3(playerX,1.55f,playerZ));
+            listener.setForwardProperty(Vector3(
+                std::sin(playerYaw),0.0f,-std::cos(playerYaw)));
+            XnaAudio::AudioEmitter emitter;
+            emitter.setPositionProperty(Vector3(emitterX,1.15f,emitterZ));
+            passingTrain_->Apply3D(listener,emitter);
+            passingTrain_->Play();
+            passingTrainCooldown_ = 8.0;
+            ++passingTrainEventCount_;
+            return;
         }
     }
 
@@ -957,6 +981,7 @@ private:
         stop(crossingWarning_);
         stop(stationAmbience_);
         stop(interiorHvac_);
+        stop(rain_);
         stop(gangwayRattle_);
         stop(railTexture_);
         stop(curveSqueal_);
@@ -982,6 +1007,7 @@ private:
     std::unique_ptr<XnaAudio::SoundEffect> toiletDoorEffect_;
     std::unique_ptr<XnaAudio::SoundEffect> passingTrainEffect_;
     std::unique_ptr<XnaAudio::SoundEffect> crossingWarningEffect_;
+    std::unique_ptr<XnaAudio::SoundEffect> rainEffect_;
     std::vector<std::unique_ptr<XnaAudio::SoundEffect>> carpetFootstepEffects_;
     std::vector<std::unique_ptr<XnaAudio::SoundEffect>> nonCarpetedFootstepEffects_;
     std::vector<std::unique_ptr<XnaAudio::SoundEffect>> murmurEffects_;
@@ -1016,6 +1042,7 @@ private:
     std::unique_ptr<XnaAudio::SoundEffectInstance> murmur_;
     std::unique_ptr<XnaAudio::SoundEffectInstance> stationAmbience_;
     std::unique_ptr<XnaAudio::SoundEffectInstance> interiorHvac_;
+    std::unique_ptr<XnaAudio::SoundEffectInstance> rain_;
     std::unique_ptr<XnaAudio::SoundEffectInstance> doorInstance_;
     std::unique_ptr<XnaAudio::SoundEffectInstance> doorWarningInstance_;
     std::unique_ptr<XnaAudio::SoundEffectInstance> announcementChime_;
@@ -1047,6 +1074,8 @@ private:
     float brakingEffort_ = 0.0f;
     float crossingWarningLevel_ = 0.0f;
     float announcementDuck_ = 0.0f;
+    float rainMix_ = 0.0f;
+    Sim::WeatherMode weatherMode_ = Sim::WeatherMode::Clear;
     bool crossingWarningAudible_ = false;
     bool previousDoorsOpen_ = true;
     bool previousToiletDoorOpen_ = false;
@@ -1187,5 +1216,7 @@ float TrainAudio::tractionEffort() const noexcept { return impl_->tractionEffort
 float TrainAudio::brakingEffort() const noexcept { return impl_->brakingEffort(); }
 
 void TrainAudio::setSettings(TrainAudioSettings settings) { impl_->setSettings(settings); }
+void TrainAudio::setWeather(Sim::WeatherMode mode) noexcept { impl_->setWeather(mode); }
+float TrainAudio::rainLevel() const noexcept { return impl_->rainLevel(); }
 
 } // namespace TrainSim::Audio

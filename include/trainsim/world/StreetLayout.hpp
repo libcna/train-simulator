@@ -107,8 +107,8 @@ inline std::optional<StreetPocket> streetPocket(std::span<const WorldFeature> fe
             switch (f.kind)
             {
                 case FeatureKind::Townhouse: width=4.3; length=5.7; break;
-                case FeatureKind::House: width=5; length=6.2; break;
-                case FeatureKind::Apartment: width=6.4; length=7.8; break;
+                case FeatureKind::House: width=5; length=std::max(6.2,houseLength(housePlan(f.variant,1.0))*0.5+1.2); break;
+                case FeatureKind::Apartment: width=6.4; length=std::max(7.8,blockLength(blockPlan(f.variant))*0.5+1.3); break;
                 case FeatureKind::Tower: width=9; length=11; break;
                 case FeatureKind::Warehouse: width=15; length=30; break;
                 case FeatureKind::Farmstead: width=14; length=16; break;

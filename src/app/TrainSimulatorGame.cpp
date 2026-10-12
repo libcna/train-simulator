@@ -1,6 +1,7 @@
 #include "trainsim/app/TrainSimulatorGame.hpp"
 #include "trainsim/app/MouseLook.hpp"
 
+#include "trainsim/sim/Environment.hpp"
 #include "trainsim/sim/TrainInterior.hpp"
 
 #include "Microsoft/Xna/Framework/Color.hpp"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <cmath>
 #include <filesystem>
@@ -148,6 +150,10 @@ TrainSimulatorGame::TrainSimulatorGame(LaunchOptions options)
     loadedGraphicsQuality_ = settings_.graphicsQuality;
     if (options_.graphicsQuality.has_value())
         settings_.graphicsQuality = *options_.graphicsQuality;
+    loadedServiceStartMinutes_ = settings_.serviceStartMinutes;
+    loadedWeatherMode_ = settings_.weatherMode;
+    if (options_.serviceStartMinutes) settings_.serviceStartMinutes = *options_.serviceStartMinutes;
+    if (options_.weatherMode) settings_.weatherMode = *options_.weatherMode;
     // Thin catenary, window trim, seat edges and platform furniture otherwise shimmer badly in
     // motion. CNA negotiates the actual desktop sample count and safely clamps the request to the
     // OpenGL device. Keep Low free of the fill/resolve cost used by the software-GL smoke suite.
@@ -442,6 +448,19 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " exchange_started="
                   << passengers_.lastStationExchangeParticipantCount()
                   << " offboard=" << passengers_.offboardPassengerCount()
+                  << " clock_minutes=" << renderStats_.clockMinutes
+                  << " weather=" << Sim::weatherModeName(
+                         static_cast<Sim::WeatherMode>(settings_.weatherMode))
+                  << " sun_elevation_deg=" << renderStats_.sunElevationDegrees
+                  << " night=" << renderStats_.atmosphereNight
+                  << " rain=" << renderStats_.atmosphereRain
+                  << " overcast=" << renderStats_.atmosphereOvercast
+                  << " sky_rebuilds=" << renderStats_.skyRebuilds
+                  << " cloud_layers=" << renderStats_.cloudLayers
+                  << " rain_streak_draws=" << renderStats_.rainStreakDraws
+                  << " rain_droplet_triangles=" << renderStats_.rainDropletTriangles
+                  << " night_glow_triangles=" << renderStats_.nightGlowTriangles
+                  << " other_train_night_overlays=" << renderStats_.otherTrainNightOverlays
                   << " draw_calls=" << renderStats_.drawCalls
                   << " triangles=" << renderStats_.triangles
                   << " graphics_quality=" << settings_.graphicsQuality
@@ -565,6 +584,8 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " lineside_cabinets=" << renderStats_.linesideEquipmentCabinets
                   << " other_train_cars=" << renderStats_.otherTrainCars
                   << " other_train_cabs=" << renderStats_.otherTrainCabEnds
+                  << " other_train_locomotives=" << renderStats_.otherTrainLocomotives
+                  << " other_train_freight_wagons=" << renderStats_.otherTrainFreightWagons
                   << " road_vehicles=" << renderStats_.roadVehicles
                   << " tunnel_luminaires=" << renderStats_.tunnelLuminaires
                   << " tunnel_niches=" << renderStats_.tunnelSafetyNiches
@@ -628,6 +649,7 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << (audio_ ? audio_->passengerMurmurEventCount() : 0U)
                   << " passing_train_audio="
                   << (audio_ ? audio_->passingTrainEventCount() : 0U)
+                  << " rain_audio=" << (audio_ ? audio_->rainLevel() : 0.0f)
                   << " door_audio="
                   << (audio_ ? audio_->doorTransitionEventCount() : 0U)
                   << " toilet_door_audio="
@@ -691,6 +713,11 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " verge_flower_clumps=" << renderStats_.vergeFlowerClumps
                   << " palisade_posts=" << renderStats_.palisadePosts
                   << " house_outbuildings=" << renderStats_.houseOutbuildings
+                  << " house_rear_wings=" << renderStats_.houseRearWings
+                  << " block_penthouses=" << renderStats_.blockPenthouses
+                  << " platform_amenities=" << renderStats_.platformAmenities
+                  << " platform_seated=" << renderStats_.platformSeatedAvatars
+                  << " platform_suitcases=" << renderStats_.platformSuitcaseTravellers
                   << " block_balconies=" << renderStats_.blockBalconies
                   << " canopy_valance_boards=" << renderStats_.canopyValanceBoards
                   << " tramline_segments=" << renderStats_.tramlineSegments
@@ -759,6 +786,7 @@ void TrainSimulatorGame::LoadContent()
                 throw std::runtime_error("Audio interaction smoke could not resume every live instance");
         }
     }
+    applyEnvironmentSettings();
     previousKeyboard_ = Keyboard::GetState();
     previousMouse_ = Mouse::GetState();
 }
@@ -837,13 +865,27 @@ void TrainSimulatorGame::applyAudioSettings()
         settings_.passengerVolume, settings_.trainVolume});
 }
 
+void TrainSimulatorGame::applyEnvironmentSettings()
+{
+    const auto weather = static_cast<Sim::WeatherMode>(settings_.weatherMode);
+    if (scene_) scene_->setEnvironment(settings_.serviceStartMinutes,weather);
+    if (audio_) audio_->setWeather(weather);
+}
+
 void TrainSimulatorGame::persistSettings() const
 {
     try
     {
-        Config::settingsForPersistence(
+        Config::Settings persisted = Config::settingsForPersistence(
             settings_,loadedGraphicsQuality_,options_.graphicsQuality.has_value(),
-            graphicsQualityAdjustedInMenu_).save(options_.userConfigFile);
+            graphicsQualityAdjustedInMenu_);
+        // Like --quality, --time and --weather are launch overrides, not preference updates.
+        if ((options_.serviceStartMinutes || options_.weatherMode) && !environmentAdjustedInMenu_)
+        {
+            persisted.serviceStartMinutes = loadedServiceStartMinutes_;
+            persisted.weatherMode = loadedWeatherMode_;
+        }
+        persisted.save(options_.userConfigFile);
     }
     catch (const std::exception& error)
     {
@@ -1339,7 +1381,7 @@ void TrainSimulatorGame::Update(GameTime& gameTime)
     }
     if (paused_)
     {
-        constexpr int pauseItems = 10;
+        constexpr int pauseItems = 12;
         if (pressed(keyboard, Keys::Up))
             pauseSelection_ = (pauseSelection_ + pauseItems - 1) % pauseItems;
         if (pressed(keyboard, Keys::Down))
@@ -1379,6 +1421,21 @@ void TrainSimulatorGame::Update(GameTime& gameTime)
         }
         if (direction != 0.0f && pauseSelection_ == 9)
             settings_.announcementCaptions = !settings_.announcementCaptions;
+        if (direction != 0.0f && (pauseSelection_ == 10 || pauseSelection_ == 11))
+        {
+            // Time moves the clock in half-hour steps; weather cycles through every mode.
+            if (pauseSelection_ == 10)
+                settings_.serviceStartMinutes = (settings_.serviceStartMinutes
+                    + static_cast<int>(direction)*30 + 24*60) % (24*60);
+            else
+            {
+                constexpr int modes = static_cast<int>(Sim::WeatherMode::Count);
+                settings_.weatherMode = (settings_.weatherMode + static_cast<int>(direction)
+                                         + modes) % modes;
+            }
+            environmentAdjustedInMenu_ = true;
+            applyEnvironmentSettings();
+        }
         if (direction != 0.0f) persistSettings();
     }
     if (pressed(keyboard, Keys::E) && !paused_ && !showMap_ && !showHelp_) interact();
@@ -1942,65 +1999,53 @@ void TrainSimulatorGame::drawUi()
     if (showMap_) drawMap();
     if (paused_)
     {
-        drawPanel(width/2-245,height/2-270,490,540,Color(5,13,18,240));
+        drawPanel(width/2-245,height/2-305,490,610,Color(5,13,18,240));
         drawText("SERVICE PAUSED",static_cast<float>(width/2-194),
-                 static_cast<float>(height/2-240),Color(244,244,236,255),2.8f);
-        const std::string fovLine = std::string(pauseSelection_ == 0 ? ">  " : "   ")
-            + "FIELD OF VIEW       "
-            + std::to_string(static_cast<int>(std::round(settings_.fieldOfViewDegrees))) + " DEG";
-        const std::string mouseLine = std::string(pauseSelection_ == 1 ? ">  " : "   ")
-            + "MOUSE SENSITIVITY   "
-            + std::to_string(static_cast<int>(std::round(settings_.mouseSensitivity * 10'000.0f)));
-        const std::string motionLine = std::string(pauseSelection_ == 2 ? ">  " : "   ")
-            + "CAMERA MOTION       "
-            + std::to_string(static_cast<int>(std::round(settings_.cameraVibration * 100.0f))) + " PCT";
-        const std::string qualityLine = std::string(pauseSelection_ == 3 ? ">  " : "   ")
-            + "GRAPHICS QUALITY    " + graphicsQualityText(settings_.graphicsQuality);
-        const std::string masterLine = std::string(pauseSelection_ == 4 ? ">  " : "   ")
-            + "MASTER VOLUME       "
-            + std::to_string(static_cast<int>(std::round(settings_.masterVolume * 100.0f))) + " PCT";
-        const std::string trainLine = std::string(pauseSelection_ == 5 ? ">  " : "   ")
-            + "TRAIN VOLUME        "
-            + std::to_string(static_cast<int>(std::round(settings_.trainVolume * 100.0f))) + " PCT";
-        const std::string announcementLine = std::string(pauseSelection_ == 6 ? ">  " : "   ")
-            + "ANNOUNCEMENTS       "
-            + std::to_string(static_cast<int>(std::round(settings_.announcementVolume * 100.0f))) + " PCT";
-        const std::string passengerLine = std::string(pauseSelection_ == 7 ? ">  " : "   ")
-            + "PASSENGER VOICES    "
-            + std::to_string(static_cast<int>(std::round(settings_.passengerVolume * 100.0f))) + " PCT";
-        const std::string vegetationLine = std::string(pauseSelection_ == 8 ? ">  " : "   ")
-            + "VEGETATION RANGE    "
-            + std::to_string(static_cast<int>(std::round(effectiveVegetationDistance(settings_))))
-            + (effectiveVegetationDistance(settings_) + 0.5f < settings_.vegetationDistanceMetres
-                ? "/" + std::to_string(static_cast<int>(std::round(
-                    settings_.vegetationDistanceMetres))) : std::string{}) + " M";
-        const std::string captionsLine = std::string(pauseSelection_ == 9 ? ">  " : "   ")
-            + "ANNOUNCEMENT TEXT   "
-            + (settings_.announcementCaptions ? "ON" : "OFF");
-        drawText(fovLine,static_cast<float>(width/2-200),static_cast<float>(height/2-182),
-                 pauseSelection_ == 0 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(mouseLine,static_cast<float>(width/2-200),static_cast<float>(height/2-148),
-                 pauseSelection_ == 1 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(motionLine,static_cast<float>(width/2-200),static_cast<float>(height/2-114),
-                 pauseSelection_ == 2 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(qualityLine,static_cast<float>(width/2-200),static_cast<float>(height/2-80),
-                 pauseSelection_ == 3 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(masterLine,static_cast<float>(width/2-200),static_cast<float>(height/2-46),
-                 pauseSelection_ == 4 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(trainLine,static_cast<float>(width/2-200),static_cast<float>(height/2-12),
-                 pauseSelection_ == 5 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(announcementLine,static_cast<float>(width/2-200),static_cast<float>(height/2+22),
-                 pauseSelection_ == 6 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(passengerLine,static_cast<float>(width/2-200),static_cast<float>(height/2+56),
-                 pauseSelection_ == 7 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(vegetationLine,static_cast<float>(width/2-200),static_cast<float>(height/2+90),
-                 pauseSelection_ == 8 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
-        drawText(captionsLine,static_cast<float>(width/2-200),static_cast<float>(height/2+124),
-                 pauseSelection_ == 9 ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
+                 static_cast<float>(height/2-275),Color(244,244,236,255),2.8f);
+        const auto percent = [](float value) {
+            return std::to_string(static_cast<int>(std::round(value * 100.0f))) + " PCT";
+        };
+        const double clock = Sim::serviceClockHours(settings_.serviceStartMinutes/60.0,
+                                                    service_.state().serviceElapsedSeconds);
+        const int clockMinutes = static_cast<int>(clock*60.0) % (24*60);
+        const auto twoDigits = [](int value) {
+            return std::string(value < 10 ? "0" : "") + std::to_string(value);
+        };
+        std::string weatherName(Sim::weatherModeName(
+            static_cast<Sim::WeatherMode>(settings_.weatherMode)));
+        std::transform(weatherName.begin(),weatherName.end(),weatherName.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        const std::array<std::string,12> items{
+            "FIELD OF VIEW       "
+                + std::to_string(static_cast<int>(std::round(settings_.fieldOfViewDegrees))) + " DEG",
+            "MOUSE SENSITIVITY   "
+                + std::to_string(static_cast<int>(std::round(settings_.mouseSensitivity * 10'000.0f))),
+            "CAMERA MOTION       " + percent(settings_.cameraVibration),
+            std::string("GRAPHICS QUALITY    ") + graphicsQualityText(settings_.graphicsQuality),
+            "MASTER VOLUME       " + percent(settings_.masterVolume),
+            "TRAIN VOLUME        " + percent(settings_.trainVolume),
+            "ANNOUNCEMENTS       " + percent(settings_.announcementVolume),
+            "PASSENGER VOICES    " + percent(settings_.passengerVolume),
+            "VEGETATION RANGE    "
+                + std::to_string(static_cast<int>(std::round(effectiveVegetationDistance(settings_))))
+                + (effectiveVegetationDistance(settings_) + 0.5f < settings_.vegetationDistanceMetres
+                    ? "/" + std::to_string(static_cast<int>(std::round(
+                        settings_.vegetationDistanceMetres))) : std::string{}) + " M",
+            std::string("ANNOUNCEMENT TEXT   ") + (settings_.announcementCaptions ? "ON" : "OFF"),
+            "TIME OF DAY         " + twoDigits(clockMinutes/60) + ":" + twoDigits(clockMinutes%60),
+            "WEATHER             " + weatherName};
+        for (std::size_t item = 0; item < items.size(); ++item)
+        {
+            const bool selected = pauseSelection_ == static_cast<int>(item);
+            drawText(std::string(selected ? ">  " : "   ") + items[item],
+                     static_cast<float>(width/2-200),
+                     static_cast<float>(height/2-217+static_cast<int>(item)*34),
+                     selected ? Color(245,190,49,255) : Color(224,231,229,255),1.8f);
+        }
         drawText("UP / DOWN  SELECT    LEFT / RIGHT  ADJUST",
-                 static_cast<float>(width/2-200),static_cast<float>(height/2+169),
+                 static_cast<float>(width/2-200),static_cast<float>(height/2+202),
                  Color(145,190,198,255),1.45f);
-        drawText("ESC  RESUME",static_cast<float>(width/2-70),static_cast<float>(height/2+225),
+        drawText("ESC  RESUME",static_cast<float>(width/2-70),static_cast<float>(height/2+250),
                  Color(233,238,233,255),1.6f);
     }
     spriteBatch_->End();

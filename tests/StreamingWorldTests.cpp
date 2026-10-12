@@ -2,6 +2,7 @@
 
 #include "trainsim/sim/Route.hpp"
 #include "trainsim/sim/RouteSimulation.hpp"
+#include "trainsim/world/OtherTrainConsist.hpp"
 #include "trainsim/world/StreamingWorld.hpp"
 #include "trainsim/world/StreetLayout.hpp"
 #include "trainsim/world/StationSite.hpp"
@@ -891,7 +892,10 @@ TEST_CASE("moving other train position is deterministic finite and route bounded
         for (const WorldFeature& feature : chunk.features)
             if (feature.kind == FeatureKind::OtherTrain)
             {
-                REQUIRE(feature.variant == static_cast<std::uint32_t>(chunk.index % 3));
+                REQUIRE(otherTrainPhaseVariant(feature.variant)
+                        == static_cast<std::uint32_t>(chunk.index % 3));
+                REQUIRE(otherTrainType(feature.variant)
+                        == otherTrainTypeForOrdinal(chunk.index / 37));
                 if (chunk.index == 37)
                 {
                     REQUIRE(feature.variant == 1U);
@@ -899,4 +903,133 @@ TEST_CASE("moving other train position is deterministic finite and route bounded
                 }
             }
     REQUIRE(foundClosePass);
+}
+
+TEST_CASE("oncoming services rotate four consist types without moving their phase")
+{
+    // Phase-only variants are the original regional unit at its original speed.
+    for (std::uint32_t phase = 0; phase < 3; ++phase)
+    {
+        REQUIRE(otherTrainType(phase) == OtherTrainType::RegionalEmu);
+        for (std::size_t type = 0; type < static_cast<std::size_t>(OtherTrainType::Count); ++type)
+        {
+            const std::uint32_t variant =
+                otherTrainVariant(phase,static_cast<OtherTrainType>(type));
+            REQUIRE(otherTrainPhaseVariant(variant) == phase);
+            REQUIRE(otherTrainType(variant) == static_cast<OtherTrainType>(type));
+        }
+    }
+    REQUIRE(otherTrainType(0xFFU) == OtherTrainType::RegionalEmu);
+    REQUIRE(otherTrainConsist(OtherTrainType::RegionalEmu).lengthMetres() == 57.0);
+
+    for (std::size_t type = 0; type < static_cast<std::size_t>(OtherTrainType::Count); ++type)
+    {
+        const OtherTrainConsist consist = otherTrainConsist(static_cast<OtherTrainType>(type));
+        REQUIRE(!consist.vehicles.empty());
+        // A long consist must still fit inside the hidden traversal reset.
+        REQUIRE(consist.lengthMetres() <= 210.0);
+        REQUIRE(consist.speedMetresPerSecond > 20.0);
+        // Vehicles abut: the leading and trailing ends sit exactly at the consist half-length.
+        const double half = consist.lengthMetres()*0.5;
+        REQUIRE(std::abs(consist.leadOffsetMetres(0)+consist.vehicles.front().lengthMetres*0.5
+                         - half) < 1e-9);
+        const std::size_t last = consist.vehicles.size()-1;
+        REQUIRE(std::abs(consist.leadOffsetMetres(last)-consist.vehicles.back().lengthMetres*0.5
+                         + half) < 1e-9);
+        int cabs = 0;
+        for (const OtherTrainVehicle& vehicle : consist.vehicles) cabs += vehicle.cabEnds;
+        REQUIRE(cabs == 2);
+    }
+    REQUIRE(otherTrainConsist(OtherTrainType::Freight).lengthMetres() > 180.0);
+    REQUIRE(otherTrainConsist(OtherTrainType::Freight).speedMetresPerSecond
+            < otherTrainConsist(OtherTrainType::Intercity).speedMetresPerSecond);
+
+    // The whole route meets every type, and the freight crosses its window at its own speed.
+    const Route route = Route::NorthernValleyExpress();
+    StreamingWorld world(route,250.0,1);
+    std::array<int,static_cast<std::size_t>(OtherTrainType::Count)> seen{};
+    // Three-chunk windows centred every 750 m visit each chunk exactly once.
+    for (double distance = 375.0; distance < route.lengthMetres(); distance += 750.0)
+    {
+        world.update(distance);
+        for (const Chunk& chunk : world.chunks())
+            for (const WorldFeature& feature : chunk.features)
+                if (feature.kind == FeatureKind::OtherTrain)
+                    ++seen[static_cast<std::size_t>(otherTrainType(feature.variant))];
+    }
+    for (int count : seen) REQUIRE(count >= 6);
+    const WorldFeature freight{FeatureKind::OtherTrain,91'000.0,-5.0,1.0,
+                               otherTrainVariant(0U,OtherTrainType::Freight)};
+    REQUIRE(std::abs(movingOtherTrainDistance(freight,1.0,286'400.0)
+                     - movingOtherTrainDistance(freight,0.0,286'400.0) + 25.0) < 1e-9);
+    REQUIRE(movingOtherTrainVisible(freight,75.0,286'400.0));
+    REQUIRE(!movingOtherTrainVisible(freight,77.0,286'400.0));
+}
+
+TEST_CASE("level crossings stay closed until the tail of a long freight has cleared")
+{
+    const Route route = Route::NorthernValleyExpress();
+    StreamingWorld world(route,250.0,3);
+    // Find a crossing and an oncoming freight in the same window by scanning the route.
+    for (double distance = 125.0; distance < route.lengthMetres(); distance += 250.0)
+    {
+        world.update(distance);
+        for (const WorldFeature& train : world.otherTrains())
+        {
+            if (otherTrainType(train.variant) != OtherTrainType::Freight) continue;
+            const double half = otherTrainConsist(OtherTrainType::Freight).lengthMetres()*0.5;
+            for (double seconds = 0.0; seconds < 75.0; seconds += 0.5)
+            {
+                if (!movingOtherTrainVisible(train,seconds,route.lengthMetres())) continue;
+                const double centre = movingOtherTrainDistance(train,seconds,
+                                                               route.lengthMetres());
+                // 320 m behind the tail the road stays fully closed although the consist
+                // centre is outside the closure envelope; the player's train is far away.
+                const double behindTail = centre+half+320.0;
+                REQUIRE(levelCrossingClosureAmount(behindTail,centre) < 1.0);
+                REQUIRE(world.requiredLevelCrossingClosure(
+                    behindTail,behindTail+40'000.0,seconds) == 1.0);
+                const double beyondTail = centre+half+600.0;
+                REQUIRE(world.requiredLevelCrossingClosure(
+                    beyondTail,beyondTail+40'000.0,seconds) == 0.0);
+            }
+            return;
+        }
+    }
+    REQUIRE(false);
+}
+
+TEST_CASE("oncoming services stay listed while their anchor chunk is outside the scenery window")
+{
+    const Route route = Route::NorthernValleyExpress();
+    StreamingWorld world(route,250.0,3);
+    // Chunk 111's service starts 950 m beyond its anchor, beside a player in chunk 115.
+    world.update(28'800.0);
+    bool anchorLoaded = false;
+    for (const Chunk& chunk : world.chunks()) anchorLoaded = anchorLoaded || chunk.index == 111;
+    REQUIRE(!anchorLoaded);
+    REQUIRE(world.otherTrains().size() == 1);
+    const WorldFeature& train = world.otherTrains().front();
+    REQUIRE(train.routeDistance == 111*250.0+80.0);
+    REQUIRE(otherTrainType(train.variant) == OtherTrainType::DieselUnit);
+    REQUIRE(movingOtherTrainVisible(train,0.0,route.lengthMetres()));
+    REQUIRE(std::abs(movingOtherTrainDistance(train,0.0,route.lengthMetres())-28'780.0) < 1e-9);
+
+    // Generated anchors and the traffic list agree wherever both exist.
+    for (double distance = 375.0; distance < route.lengthMetres(); distance += 1'750.0)
+    {
+        world.update(distance);
+        for (const Chunk& chunk : world.chunks())
+            for (const WorldFeature& feature : chunk.features)
+                if (feature.kind == FeatureKind::OtherTrain)
+                {
+                    const auto listed = std::find_if(world.otherTrains().begin(),
+                        world.otherTrains().end(),[&](const WorldFeature& train) {
+                            return train.routeDistance == feature.routeDistance;
+                        });
+                    REQUIRE(listed != world.otherTrains().end());
+                    REQUIRE(listed->variant == feature.variant);
+                }
+        REQUIRE(world.otherTrains().size() <= 1);
+    }
 }

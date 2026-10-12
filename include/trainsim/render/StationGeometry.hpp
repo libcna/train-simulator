@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 namespace TrainSim::Render {
 
@@ -681,4 +682,172 @@ inline void addCanopyFrame(MeshBuilder& mesh,
                         {postX+x+0.018f,platformHeight+0.066f,z+0.018f},bolt,placement);
 }
 
+// Platform furniture (ENV-136). Local frame as addPlatformBin: +Z faces the track, X runs along
+// the platform and Y rises from the paving.
+enum class PlatformBenchStyle { Classic, Slatted, Perforated };
+inline constexpr float kPlatformBenchSeatHeight=0.47f;
+
+inline void addPlatformBench(MeshBuilder& mesh,const Microsoft::Xna::Framework::Matrix& placement,
+    PlatformBenchStyle style,const Microsoft::Xna::Framework::Color& slat)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto box=[&](Vector3 a,Vector3 b,const Color& colour) { mesh.addBox(a,b,colour,placement); };
+    const Color iron(52,62,56,255),steel(132,138,136,255),dark(58,62,62,255);
+    const float seat=kPlatformBenchSeatHeight;
+    if (style==PlatformBenchStyle::Perforated)
+    {
+        // Three moulded steel seats on a beam carried by two posts.
+        box({-1.15f,seat-0.16f,-0.05f},{1.15f,seat-0.10f,0.05f},steel);
+        for (float x : {-0.85f,0.85f}) box({x-0.05f,0.0f,-0.06f},{x+0.05f,seat-0.10f,0.06f},steel);
+        for (float x : {-0.75f,0.0f,0.75f})
+        {
+            box({x-0.30f,seat-0.06f,-0.20f},{x+0.30f,seat,0.24f},slat);
+            box({x-0.30f,seat,-0.26f},{x+0.30f,seat+0.46f,-0.20f},slat);
+            box({x-0.27f,seat+0.002f,-0.17f},{x+0.27f,seat+0.004f,0.21f},dark);
+        }
+        return;
+    }
+    if (style==PlatformBenchStyle::Slatted)
+    {
+        // Heritage bench: timber slats between two cast-iron end frames with armrests.
+        for (int i=0;i<4;++i)
+        {
+            const float z=0.24f-static_cast<float>(i)*0.13f;
+            box({-1.15f,seat-0.04f,z-0.05f},{1.15f,seat,z+0.05f},slat);
+        }
+        for (int i=0;i<3;++i)
+        {
+            const float y=seat+0.12f+static_cast<float>(i)*0.13f;
+            box({-1.15f,y,-0.21f-0.03f*static_cast<float>(i)},{1.15f,y+0.09f,-0.17f-0.03f*static_cast<float>(i)},slat);
+        }
+        for (float x : {-1.05f,1.05f})
+        {
+            box({x-0.04f,0.0f,0.20f},{x+0.04f,seat,0.27f},iron);
+            box({x-0.04f,0.0f,-0.20f},{x+0.04f,seat+0.52f,-0.13f},iron);
+            box({x-0.04f,seat-0.07f,-0.20f},{x+0.04f,seat-0.02f,0.27f},iron);
+            box({x-0.045f,seat+0.20f,-0.16f},{x+0.045f,seat+0.25f,0.26f},iron);
+            box({x-0.04f,seat,0.21f},{x+0.04f,seat+0.22f,0.26f},iron);
+        }
+        return;
+    }
+    box({-1.2f,seat-0.07f,-0.22f},{1.2f,seat,0.26f},slat);
+    box({-1.2f,seat+0.05f,-0.30f},{1.2f,seat+0.62f,-0.20f},slat);
+    for (float x : {-0.85f,0.85f}) box({x-0.06f,0.0f,-0.24f},{x+0.06f,seat-0.07f,0.22f},dark);
+}
+
+// Open-fronted rural wind shelter around a platform bench (ENV-136), in the bench's own frame:
+// glazed back and ends, four posts and a timber roof. The track side stays open, so the seated
+// figures and the bench read from the train. The world batch is opaque; the glazing is a pale
+// tinted pane between dark frames rather than a solid coloured block.
+inline constexpr float kWindShelterHalfLength=1.62f;
+inline constexpr float kWindShelterBack=-0.58f;
+inline constexpr float kWindShelterFront=0.52f;
+inline constexpr float kWindShelterRoofHeight=2.32f;
+
+inline void addPlatformWindShelter(MeshBuilder& mesh,const Microsoft::Xna::Framework::Matrix& placement)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto box=[&](Vector3 a,Vector3 b,const Color& colour) { mesh.addBox(a,b,colour,placement); };
+    const Color frame(57,67,68,255),glass(126,158,164,255),roof(112,79,48,255),fascia(74,58,42,255);
+    const float x=kWindShelterHalfLength,back=kWindShelterBack,front=kWindShelterFront;
+    const float top=kWindShelterRoofHeight;
+    for (float px : {-x,x})
+        for (float pz : {back,front})
+            box({px-0.035f,0.0f,pz-0.035f},{px+0.035f,top,pz+0.035f},frame);
+    // Back pane with a bottom rail, a waist rail and a head rail.
+    box({-x,0.14f,back-0.015f},{x,top-0.10f,back+0.015f},glass);
+    for (const auto& [low,high] : std::array<std::pair<float,float>,3>{{
+            {0.08f,0.14f},{1.04f,1.09f},{top-0.10f,top-0.04f}}})
+        box({-x,low,back-0.025f},{x,high,back+0.025f},frame);
+    // End panes stop short of the open front.
+    for (float px : {-x,x})
+    {
+        box({px-0.015f,0.14f,back},{px+0.015f,top-0.10f,front-0.06f},glass);
+        box({px-0.025f,0.08f,back},{px+0.025f,0.14f,front},frame);
+        box({px-0.025f,top-0.10f,back},{px+0.025f,top-0.04f,front},frame);
+    }
+    // Timetable sheet on the inner face of the back pane, clear of the bench backrest.
+    box({0.92f,1.18f,back+0.016f},{1.42f,1.86f,back+0.026f},Color(232,234,226,255));
+    box({0.92f,1.78f,back+0.026f},{1.42f,1.86f,back+0.030f},Color(40,72,110,255));
+    // Roof overhangs the posts on every side, deepest over the open front.
+    box({-x-0.22f,top-0.02f,back-0.20f},{x+0.22f,top+0.08f,front+0.32f},roof);
+    box({-x-0.22f,top-0.04f,front+0.30f},{x+0.22f,top+0.12f,front+0.34f},fascia);
+}
+
+// Help point: a slim pillar with a call panel, button and speaker grille.
+inline void addPlatformHelpPoint(MeshBuilder& mesh,const Microsoft::Xna::Framework::Matrix& placement)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto box=[&](Vector3 a,Vector3 b,const Color& colour) { mesh.addBox(a,b,colour,placement); };
+    box({-0.15f,0.0f,-0.10f},{0.15f,1.75f,0.10f},Color(58,92,138,255));
+    box({-0.12f,1.30f,0.10f},{0.12f,1.62f,0.115f},Color(232,236,234,255));
+    box({-0.045f,1.00f,0.10f},{0.045f,1.09f,0.13f},Color(206,46,40,255));
+    for (int i=0;i<4;++i)
+        box({-0.08f,0.80f+0.03f*static_cast<float>(i),0.10f},{0.08f,0.81f+0.03f*static_cast<float>(i),0.112f},
+            Color(36,44,52,255));
+}
+
+// Ticket validator post with a yellow head and a dark card slot.
+inline void addTicketValidator(MeshBuilder& mesh,const Microsoft::Xna::Framework::Matrix& placement)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto box=[&](Vector3 a,Vector3 b,const Color& colour) { mesh.addBox(a,b,colour,placement); };
+    box({-0.05f,0.0f,-0.05f},{0.05f,1.05f,0.05f},Color(118,124,122,255));
+    box({-0.12f,1.05f,-0.08f},{0.12f,1.38f,0.08f},Color(222,184,40,255));
+    box({-0.08f,1.20f,0.08f},{0.08f,1.32f,0.092f},Color(30,34,36,255));
+    box({-0.06f,1.10f,0.08f},{0.06f,1.14f,0.095f},Color(64,170,96,255));
+}
+
+// Drinks and snack machine; the lit product window goes to the unlit emitter batch.
+inline void addVendingMachine(MeshBuilder& mesh,MeshBuilder& emitters,
+    const Microsoft::Xna::Framework::Matrix& placement,unsigned variant)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto box=[&](Vector3 a,Vector3 b,const Color& colour) { mesh.addBox(a,b,colour,placement); };
+    static const std::array<Color,3> bodies={Color(176,44,40,255),Color(40,92,150,255),Color(44,46,50,255)};
+    box({-0.45f,0.0f,-0.38f},{0.45f,1.85f,0.36f},bodies[variant%bodies.size()]);
+    emitters.addBox({-0.38f,0.62f,0.36f},{0.16f,1.72f,0.37f},Color(214,224,218,255),placement);
+    static const std::array<Color,4> products={Color(210,60,52,255),Color(70,130,190,255),
+                                               Color(232,190,60,255),Color(90,160,90,255)};
+    for (int row=0;row<4;++row)
+        for (int column=0;column<4;++column)
+        {
+            const float x=-0.33f+static_cast<float>(column)*0.12f,y=0.72f+static_cast<float>(row)*0.26f;
+            box({x,y,0.30f},{x+0.08f,y+0.14f,0.365f},products[(row+column+variant)%products.size()]);
+        }
+    box({0.20f,0.95f,0.36f},{0.40f,1.45f,0.38f},Color(36,38,40,255));
+    box({-0.38f,0.18f,0.36f},{0.16f,0.42f,0.38f},Color(26,28,30,255));
+}
+
+// Three galvanised Sheffield cycle stands in a row along the platform.
+inline void addCycleStands(MeshBuilder& mesh,const Microsoft::Xna::Framework::Matrix& placement)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto box=[&](Vector3 a,Vector3 b,const Color& colour) { mesh.addBox(a,b,colour,placement); };
+    const Color steel(150,156,154,255);
+    for (float x : {-1.0f,0.0f,1.0f})
+    {
+        for (float z : {-0.32f,0.32f}) box({x-0.025f,0.0f,z-0.025f},{x+0.025f,0.78f,z+0.025f},steel);
+        box({x-0.025f,0.76f,-0.345f},{x+0.025f,0.81f,0.345f},steel);
+    }
+}
+
+// Platform luggage trolley with two cases and a bag.
+inline void addLuggageTrolley(MeshBuilder& mesh,const Microsoft::Xna::Framework::Matrix& placement)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto box=[&](Vector3 a,Vector3 b,const Color& colour) { mesh.addBox(a,b,colour,placement); };
+    const Color frame(140,146,148,255),wheel(32,34,36,255);
+    box({-0.60f,0.16f,-0.30f},{0.60f,0.21f,0.30f},frame);
+    box({-0.66f,0.21f,-0.30f},{-0.60f,1.05f,0.30f},frame);
+    box({-0.70f,0.98f,-0.28f},{-0.62f,1.06f,0.28f},Color(196,56,48,255));
+    for (float x : {-0.45f,0.45f})
+        for (float z : {-0.26f,0.26f})
+            mesh.addRoundedBoxYZ({x-0.03f,0.0f,z-0.08f},{x+0.03f,0.16f,z+0.08f},0.08f,3,wheel);
+    box({-0.55f,0.21f,-0.24f},{0.25f,0.73f,0.22f},Color(46,72,104,255));
+    box({-0.45f,0.73f,-0.20f},{0.20f,1.05f,0.18f},Color(120,48,52,255));
+    box({0.30f,0.21f,-0.18f},{0.58f,0.48f,0.16f},Color(92,78,58,255));
+}
+
 } // namespace TrainSim::Render
+

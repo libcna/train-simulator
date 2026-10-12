@@ -18,6 +18,10 @@ struct Settings
     int graphicsQuality = 2;
     float vegetationDistanceMetres = 750.0f;
     bool announcementCaptions = true;
+    // Time of day and weather (ENV-138/139): the service-day start on the station clocks and a
+    // Sim::WeatherMode index (0 clear, 1 cloudy, 2 overcast, 3 rain, 4 fog, 5 changing).
+    int serviceStartMinutes = 9*60 + 17;
+    int weatherMode = 0;
 
     [[nodiscard]] static Settings parse(std::string_view text);
     [[nodiscard]] static Settings parse(std::string_view text, Settings base);

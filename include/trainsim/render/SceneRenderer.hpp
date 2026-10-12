@@ -4,7 +4,9 @@
 #include "trainsim/sim/Route.hpp"
 #include "trainsim/sim/RouteSimulation.hpp"
 #include "trainsim/sim/TrainInterior.hpp"
+#include "trainsim/world/OtherTrainConsist.hpp"
 #include "trainsim/world/StreamingWorld.hpp"
+#include "trainsim/render/Atmosphere.hpp"
 #include "trainsim/render/WorldGeometry.hpp"
 
 #include "Microsoft/Xna/Framework/Color.hpp"
@@ -125,6 +127,8 @@ struct RenderStats
     int turnoutBladeAssemblies = 0;
     int otherTrainCars = 0;
     int otherTrainCabEnds = 0;
+    int otherTrainLocomotives = 0;
+    int otherTrainFreightWagons = 0;
     int roadVehicles = 0;
     int tunnelLuminaires = 0;
     int tunnelSafetyNiches = 0;
@@ -142,6 +146,11 @@ struct RenderStats
     int vergeFlowerClumps = 0;
     int palisadePosts = 0;
     int houseOutbuildings = 0;
+    int houseRearWings = 0;
+    int blockPenthouses = 0;
+    int platformAmenities = 0;
+    int platformSeatedAvatars = 0;
+    int platformSuitcaseTravellers = 0;
     int blockBalconies = 0;
     int canopyValanceBoards = 0;
     int tramlineSegments = 0;
@@ -201,6 +210,18 @@ struct RenderStats
     int staticContactShadowTriangles = 0;
     int platformMaterialTriangles = 0;
     int interiorContactShadowTriangles = 0;
+    // Time of day and weather (ENV-138/139).
+    int clockMinutes = 0;
+    float atmosphereNight = 0.0f;
+    float atmosphereRain = 0.0f;
+    float atmosphereOvercast = 0.0f;
+    float sunElevationDegrees = 0.0f;
+    int skyRebuilds = 0;
+    int rainStreakDraws = 0;
+    int rainDropletTriangles = 0;
+    int nightGlowTriangles = 0;
+    int otherTrainNightOverlays = 0;
+    int cloudLayers = 0;
 };
 
 class SceneRenderer
@@ -217,6 +238,12 @@ public:
     void setVegetationDistance(float metres);
     void setGraphicsQuality(int quality);
     void setFacadeLightingMode(int mode) { facadeLightingMode_=mode; }
+    // Service-day start on the station clocks and the weather mode (ENV-138/139).
+    void setEnvironment(int serviceStartMinutes, Sim::WeatherMode weather) noexcept
+    {
+        serviceStartMinutes_ = serviceStartMinutes;
+        weatherMode_ = weather;
+    }
     [[nodiscard]] bool avatarLoadingComplete() const noexcept;
 
     RenderStats draw(const Microsoft::Xna::Framework::Matrix& view,
@@ -312,10 +339,8 @@ private:
     std::unique_ptr<GpuMesh> clouds_;
     std::unique_ptr<GpuMesh> sun_;
     std::vector<std::unique_ptr<GpuMesh>> roadVehicles_;
-    std::unique_ptr<GpuMesh> otherTrain_;
-    std::unique_ptr<GpuMesh> otherTrainPantograph_;
-    std::unique_ptr<GpuMesh> otherTrainFrontCab_;
-    std::unique_ptr<GpuMesh> otherTrainRearCab_;
+    std::array<std::unique_ptr<GpuMesh>,
+               static_cast<std::size_t>(World::OtherVehicleKind::Count)> otherVehicles_;
     std::unique_ptr<GpuMesh> levelCrossingBarrier_;
     std::unique_ptr<GpuMesh> contactShadow_;
     std::unique_ptr<GpuMesh> platformLuggage_;
@@ -339,6 +364,20 @@ private:
     std::unique_ptr<GpuMesh> staticWorldShadows_;
     std::unique_ptr<GpuMesh> platformMaterial_;
     std::unique_ptr<GpuMesh> worldLuminaires_;
+    std::unique_ptr<GpuMesh> worldNightGlow_;
+    // Time of day and weather (ENV-138/139).
+    int serviceStartMinutes_ = 9*60 + 17;
+    Sim::WeatherMode weatherMode_ = Sim::WeatherMode::Clear;
+    Atmosphere atmosphere_;
+    SkyPalette builtSkyPalette_;
+    Microsoft::Xna::Framework::Vector3 builtSkySun_{0,0,0};
+    int skyRebuilds_ = 0;
+    // Shadow-casting sun baked into new world windows, refreshed in whole-degree steps.
+    SunPosition worldSun_ = sunPosition(Sim::kDefaultServiceStartHours);
+    std::array<std::unique_ptr<GpuMesh>,2> rainStreaks_;
+    std::unique_ptr<GpuMesh> rainDroplets_;
+    std::array<std::unique_ptr<GpuMesh>,
+               static_cast<std::size_t>(World::OtherVehicleKind::Count)> otherVehicleNight_;
     std::unique_ptr<GpuMesh> passengerDoor_;
     std::unique_ptr<GpuMesh> passengerDoorButton_;
     std::unique_ptr<GpuMesh> passengerDoorGlass_;

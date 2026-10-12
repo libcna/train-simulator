@@ -1233,6 +1233,65 @@ wall brackets and paired power outlets. The accessible companion bay and the toi
 remain clear. Their core layout owns the same physical footprint used by rendering, preserving the
 0.84 m aisle while preventing a decorative-only table that the player could walk through.
 
+## Renderer translation units
+
+`SceneRenderer` was split on 2026-10-12 from one ~9,800-line file into focused translation units
+that share `src/render/SceneShared.hpp` (a private header with anonymous-namespace helpers and
+constants such as `kPlatformSeatedRootDrop` and the avatar budgets):
+
+| File | Contents |
+| --- | --- |
+| `SceneRenderer.cpp` | construction of shared meshes and effects, the per-frame `draw` pass order |
+| `SceneAvatars.cpp` | onboard and platform avatars, platform population and lighting |
+| `SceneStreaming.cpp` | world and track streaming state, staged uploads and swaps |
+| `WorldGeometryBuild.cpp` | `WorldGeometry::build` and `WorldBuildContext` (chunks in parallel, then stations) |
+| `TrackGeometryBuild.cpp` | the 2 km permanent-way batch |
+| `TrainInteriorBuild.cpp` | the immutable train interior, glazing and window rain beads |
+
+Reusable geometry stays in headers under `include/trainsim/render/` with unit tests in
+`tests/MeshBuilderTests.cpp`.
+
+## Oncoming traffic (ENV-137)
+
+`World::OtherTrainConsist` (`include/trainsim/world/OtherTrainConsist.hpp`) is renderer
+independent: vehicle kinds, coupled lengths, cab ends and a speed per type. An `OtherTrain`
+feature keeps its motion phase in variant bits 0-1 and its type above them
+(`otherTrainVariant`, `otherTrainType`); the type rotates with the service ordinal. Motion
+(`movingOtherTrainDistance/Visible`), the level-crossing closure (nearest vehicle), the passing
+sound and rendering all consume the same consist description. `StreamingWorld::otherTrains()` is
+a traffic window eight chunks each side of the player, wider than the scenery window, because a
+service travels up to 950 m from its anchor. `Render::addOtherTrainVehicle`
+(`OtherTrainGeometry.hpp`) builds one mesh per vehicle kind in vehicle-local metres (+Z leading);
+the renderer turns it a half turn onto the parallel track. Parked services at major stations
+alternate between the regional and diesel units.
+
+## Time of day and weather (ENV-138/139)
+
+- `Sim::Environment` (`include/trainsim/sim/Environment.hpp`): `serviceClockHours` from the
+  configured start and simulated service seconds, `parseClockTime`, weather modes and continuous
+  `WeatherConditions` (cloud cover, overcast, rain, fog), including the deterministic changing
+  itinerary. Settings keys `service_start_minutes` and `weather`; CLI `--time`, `--weather`.
+- `Render::Atmosphere` (`Atmosphere.hpp`, header only): `sunPosition` (summer arc calibrated to
+  the old fixed sun at 09:17), `sunRayDirection`, `moonPosition`, `shadowCastingPosition` (at
+  least 25 degrees), and `atmosphere(hours, weather)` with exterior light, sky palette (0..255
+  units so the reference gradient is reproduced exactly), fog range and colour, shadow strength,
+  sun/moon disc visibility, cloud tint and the night factor; `stationLighting` adds floodlighting.
+- `SceneRenderer::draw` computes the atmosphere once per frame. It rebuilds the streamed sky mesh
+  (`addAtmosphereSky`: gradient, twilight glow toward the sun, stars) only on a visible palette or
+  glow-direction change, draws the sun and moon discs, repeats the cloud layer under heavier
+  cover, fades the baked shadows and window sunlight patches, scales the water reflection, tints
+  the unlit leaf-spray effect and floodlights the platform material after dark.
+- World builds bake projected shadows from the renderer's whole-degree `worldSun_`.
+  `WorldMaterial::NightGlow` (`NightLighting.hpp`) holds lit windows (two in five rooms, seeded per
+  building), lamp heads and light pools, drawn additively with alpha = night. Oncoming vehicles
+  get additive night overlays made by `nightGlowOverlay` from their own glazing and lamp faces.
+  Signal and crossing lenses draw unlit after dark.
+- Rain (`WeatherGeometry.hpp`): two half-tiles of crossed streak quads outside a 2.4 m corridor,
+  repeated around the camera in train-local metres, scrolled by fall speed and train speed and
+  sheared along the relative wind; the platform half is skipped beside a station. Beads on the
+  outer face of every saloon window are drawn after the glass while it rains. Audio plays
+  `rain.wav` with the same rain level.
+
 ## Rendering and avatars
 
 The new `--passenger-view --car N` inspection preset selects an occupied seat and frames it
