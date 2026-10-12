@@ -38,7 +38,7 @@ in vec2 texcoord;
 in vec4 tint;
 in float depth;
 uniform sampler2D materialTexture;
-uniform vec3 ambient,diffuse,sunDirection,fogColour,eye,specular,sunSpecular;
+uniform vec3 ambient,diffuse,sunDirection,fogColour,eye,specular,sunSpecular,bounce,bounceDirection;
 uniform vec4 settings; // fog start/end, shininess, linear-light mode
 out vec4 result;
 vec3 decode(vec3 c) { return mix(c/12.92,pow((c+0.055)/1.055,vec3(2.4)),step(vec3(0.04045),c)); }
@@ -46,7 +46,7 @@ vec3 encode(vec3 c) { return mix(c*12.92,1.055*pow(max(c,vec3(0)),vec3(1.0/2.4))
 void main() {
     vec3 n=normalize(surfaceNormal);
     float ndl=dot(n,-sunDirection);
-    vec3 lighting=ambient+diffuse*max(ndl,0.0);
+    vec3 lighting=ambient+diffuse*max(ndl,0.0)+bounce*max(dot(n,-bounceDirection),0.0);
     vec3 h=normalize(normalize(eye-worldPosition)-sunDirection);
     vec3 highlight=specular*sunSpecular*pow(max(dot(h,n),0.0)*step(0.0,ndl),settings.z);
     vec3 albedo=texture(materialTexture,texcoord).rgb*tint.rgb;
@@ -78,6 +78,10 @@ void OpenGL33FacadeEffect::draw(GpuMesh& mesh,GraphicsDevice& device,BasicEffect
     vector("fogColour",reference.getFogColorProperty());
     vector("specular",reference.getSpecularColorProperty());
     vector("sunSpecular",reference.DirectionalLight0.getSpecularColorProperty());
+    const bool bounceEnabled=reference.DirectionalLight1.getEnabledProperty();
+    vector("bounce",bounceEnabled ? reference.DirectionalLight1.getDiffuseColorProperty() : Vector3::Zero);
+    vector("bounceDirection",bounceEnabled ? reference.DirectionalLight1.getDirectionProperty()
+                                           : Vector3{0,1,0});
     vector("eye",Matrix::Invert(view).getTranslationProperty());
     effect_->SetUniformVec4("settings",reference.getFogStartProperty(),reference.getFogEndProperty(),
         reference.getSpecularPowerProperty(),linear ? 1.0f : 0.0f);

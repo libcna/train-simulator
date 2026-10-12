@@ -3,6 +3,7 @@
 #include "trainsim/render/ProceduralMaterials.hpp"
 
 #include <algorithm>
+#include <cstdint>
 
 using TrainSim::Render::makeTerrainDetailImage;
 using TrainSim::Render::makeBallastDetailImage;
@@ -96,8 +97,9 @@ TEST_CASE("field surface margins join continuously and preserve railway and haze
             REQUIRE(std::abs(a.getGProperty()-b.getGProperty())<=1);
             REQUIRE(std::abs(a.getBProperty()-b.getBProperty())<=1);
         }
-        for (double distance : {500.0,52000.0,286000.0})
+        for (std::int64_t parcel : {1,104,572})
         {
+            const double distance=TrainSim::Render::ruralParcelBoundary(parcel,side);
             const auto a=ruralTerrainSurfaceTint(distance-0.001,side*70);
             const auto b=ruralTerrainSurfaceTint(distance+0.001,side*70);
             REQUIRE(a==b);
@@ -114,13 +116,14 @@ TEST_CASE("rural parcels share field colours without tinting the railway or dist
     std::vector<unsigned> identities;
     for (int parcel=0;parcel<24;++parcel)
     {
-        const double distance=static_cast<double>(parcel)*500;
         for (double side : {-1.0,1.0})
         {
+            const double distance=TrainSim::Render::ruralParcelBoundary(parcel,side);
+            const double end=TrainSim::Render::ruralParcelBoundary(parcel+1,side);
             const auto colour=ruralParcelTint(distance+1,side*35).getPackedValueProperty();
-            REQUIRE(colour==ruralParcelTint(distance+499,side*90).getPackedValueProperty());
+            REQUIRE(colour==ruralParcelTint(end-1,side*90).getPackedValueProperty());
             REQUIRE(ruralParcelTint(distance+1,side*120).getPackedValueProperty()
-                ==ruralParcelTint(distance+499,side*250).getPackedValueProperty());
+                ==ruralParcelTint(end-1,side*250).getPackedValueProperty());
             if (std::find(identities.begin(),identities.end(),colour)==identities.end())
                 identities.push_back(colour);
             REQUIRE(ruralParcelTint(distance,side*10).getGProperty()==96);
@@ -130,6 +133,31 @@ TEST_CASE("rural parcels share field colours without tinting the railway or dist
         }
     }
     REQUIRE(identities.size()==6);
+}
+
+TEST_CASE("field parcels vary their length per side on whole terrain cells")
+{
+    using TrainSim::Render::ruralParcelBoundary;
+    using TrainSim::Render::ruralParcelIndex;
+    int differentSides=0,shortParcels=0,longParcels=0;
+    for (std::int64_t parcel=0;parcel<600;++parcel)
+        for (double side : {-1.0,1.0})
+        {
+            const double begin=ruralParcelBoundary(parcel,side);
+            const double end=ruralParcelBoundary(parcel+1,side);
+            REQUIRE(std::abs(begin/50.0-std::round(begin/50.0))<1e-9);
+            REQUIRE(end-begin>=200.0);
+            REQUIRE(end-begin<=800.0);
+            if (end-begin<450.0) ++shortParcels;
+            if (end-begin>550.0) ++longParcels;
+            REQUIRE(ruralParcelIndex(begin,side)==parcel);
+            REQUIRE(ruralParcelIndex(begin+0.5*(end-begin),side)==parcel);
+            REQUIRE(ruralParcelIndex(end-0.001,side)==parcel);
+            if (side>0 && begin!=ruralParcelBoundary(parcel,-1.0)) ++differentSides;
+        }
+    REQUIRE(differentSides>400);
+    REQUIRE(shortParcels>100);
+    REQUIRE(longParcels>100);
 }
 
 TEST_CASE("terminal terrain zoning preserves track and distant urban colours")

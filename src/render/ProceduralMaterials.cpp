@@ -183,6 +183,49 @@ ProceduralImage makeNeedleDetailImage(int size)
     return image;
 }
 
+double ruralParcelBoundary(std::int64_t parcel,double side)
+{
+    // Whole 50 m terrain cells keep every boundary on a cell edge, where the subdivided field
+    // surface already has its narrow margin samples. Shifts up to 150 m keep parcels ordered.
+    auto h=static_cast<std::uint64_t>(parcel)*0x9e3779b97f4a7c15ULL
+         ^(side<0 ? 0x2545f4914f6cdd1dULL : 0x632be59bd9b4e019ULL);
+    h=(h^(h>>30))*0xbf58476d1ce4e5b9ULL;
+    h=(h^(h>>27))*0x94d049bb133111ebULL;
+    h^=h>>31;
+    return static_cast<double>(parcel)*500.0+50.0*(static_cast<double>(h%7U)-3.0);
+}
+
+std::int64_t ruralParcelIndex(double distance,double side)
+{
+    auto parcel=static_cast<std::int64_t>(std::floor(distance/500.0));
+    if (distance<ruralParcelBoundary(parcel,side)) --parcel;
+    else if (distance>=ruralParcelBoundary(parcel+1,side)) ++parcel;
+    return parcel;
+}
+
+namespace {
+// Palette slot of a field parcel, shared by its colour and by its surface working (ENV-130).
+std::uint64_t ruralParcelSlot(double distance,double lateral)
+{
+    const double across=std::abs(lateral);
+    auto identity=static_cast<std::uint64_t>(ruralParcelIndex(distance,lateral));
+    identity^=lateral<0 ? 0x9e3779b97f4a7c15ULL : 0xbf58476d1ce4e5b9ULL;
+    if (across>=100) identity^=0x94d049bb133111ebULL;
+    identity=(identity^(identity>>30))*0xbf58476d1ce4e5b9ULL;
+    identity=(identity^(identity>>27))*0x94d049bb133111ebULL;
+    return (identity^(identity>>31))%6U;
+}
+}
+
+bool ruralParcelArable(double distance,double lateral)
+{
+    const double across=std::abs(lateral);
+    if (across<26 || across>260) return false;
+    const auto slot=ruralParcelSlot(distance,lateral);
+    // Stubble and ploughed soil carry tramlines; pasture, hay and fallow do not.
+    return slot==2U || slot==3U;
+}
+
 Color ruralParcelTint(double distance,double lateral)
 {
     const double across=std::abs(lateral);
@@ -191,16 +234,11 @@ Color ruralParcelTint(double distance,double lateral)
     if (across<26) return {91,133,72,255};
     if (across>600) return {105,124,102,255};
     if (across>260) return {91,119,88,255};
-    // Parcel edges match the absolute 500 m hedge rhythm and existing terrain bands.
+    // Parcel edges match the irregular per-side hedge boundaries and existing terrain bands.
     // Pasture, mown hay, stubble and fallow tones replace unrelated per-mesh-band stripes.
     const Color palette[]={{91,133,72,255},{104,129,70,255},{139,137,83,255},
                            {137,119,78,255},{105,119,64,255},{112,108,80,255}};
-    auto identity=static_cast<std::uint64_t>(static_cast<std::int64_t>(std::floor(distance/500.0)));
-    identity^=lateral<0 ? 0x9e3779b97f4a7c15ULL : 0xbf58476d1ce4e5b9ULL;
-    if (across>=100) identity^=0x94d049bb133111ebULL;
-    identity=(identity^(identity>>30))*0xbf58476d1ce4e5b9ULL;
-    identity=(identity^(identity>>27))*0x94d049bb133111ebULL;
-    return palette[(identity^(identity>>31))%6U];
+    return palette[ruralParcelSlot(distance,lateral)];
 }
 
 Color ruralTerrainSurfaceTint(double distance,double lateral)
@@ -208,8 +246,10 @@ Color ruralTerrainSurfaceTint(double distance,double lateral)
     const double across=std::abs(lateral);
     if (across<=26) return ruralParcelTint(distance, std::copysign(std::min(across,25.999),lateral));
     if (across>=260) return ruralParcelTint(distance,std::copysign(std::max(across,260.001),lateral));
-    const double local=distance-std::floor(distance/500.0)*500.0;
-    const double edge=std::min({local,500-local,across-26,std::abs(across-100),260-across});
+    const auto parcel=ruralParcelIndex(distance,lateral);
+    const double edge=std::min({distance-ruralParcelBoundary(parcel,lateral),
+                                ruralParcelBoundary(parcel+1,lateral)-distance,
+                                across-26,std::abs(across-100),260-across});
     const double blend=std::clamp(edge/3.0,0.0,1.0);
     const double eased=blend*blend*(3-2*blend);
     const auto soil=ruralParcelTint(distance,lateral);

@@ -31,7 +31,9 @@
 #include "trainsim/render/OpenGL33FacadeEffect.hpp"
 #include "trainsim/render/OpenGL33WaterEffect.hpp"
 #include "trainsim/render/ShoreGeometry.hpp"
+#include "trainsim/render/VergeGeometry.hpp"
 #include <span>
+#include <limits>
 #include "trainsim/render/Daylight.hpp"
 #include "trainsim/render/MeshBuilder.hpp"
 #include "trainsim/render/PixelGlyphs.hpp"
@@ -310,37 +312,6 @@ Matrix rotatedBone(const Matrix& local, const Matrix& rotation)
     return rotation * Matrix::CreateTranslation(local.getTranslationProperty());
 }
 
-void addDisplayText(MeshBuilder& mesh, std::string_view text, float y, float z,
-                    bool mirrored, const Color& color, float centreX = 0.0f,
-                    float maximumWidth = 100.0f)
-{
-    if (text.empty()) return;
-    const float pixel = std::min(0.0153f,maximumWidth/(static_cast<float>(text.size())*6.0f));
-    const float width = static_cast<float>(text.size()) * 6.0f * pixel;
-    const float left = centreX - width * 0.5f;
-    for (std::size_t character = 0; character < text.size(); ++character)
-    {
-        const PixelGlyphRows rows = pixelGlyphRows(text[character]);
-        for (int row = 0; row < 7; ++row)
-            for (int column = 0; column < 5; ++column)
-            {
-                if ((rows[static_cast<std::size_t>(row)] & (0x10U >> column)) == 0) continue;
-                float x = left + (static_cast<float>(character) * 6.0f
-                                + static_cast<float>(column)) * pixel;
-                if (mirrored) x = 2.0f * centreX - x - pixel;
-                const float y0 = y - static_cast<float>(row) * pixel;
-                const float x1 = x + pixel * 0.82f;
-                const float y1 = y0 + pixel * 0.82f;
-                if (mirrored)
-                    mesh.addQuad(Vector3{x1,y0,z}, Vector3{x,y0,z},
-                                 Vector3{x,y1,z}, Vector3{x1,y1,z}, color);
-                else
-                    mesh.addQuad(Vector3{x,y0,z}, Vector3{x1,y0,z},
-                                 Vector3{x1,y1,z}, Vector3{x,y1,z}, color);
-            }
-    }
-}
-
 void addRouteSignText(MeshBuilder& mesh, const Sim::Route& route, double anchorDistance,
                       std::string_view text, double centreDistance, double lateral,
                       float baselineY, const Color& color, float maximumWidth = 3.2f)
@@ -431,6 +402,12 @@ struct SceneRenderer::AvatarVisual
     bool gpuPrimed = false;
 };
 
+// Staged uploads into the hidden GPU window submit at most this much per slice and stop once
+// a frame's budget is spent; synchronous loads (start, teleport, late) are unbounded.
+constexpr std::size_t kUploadSliceBytes = std::size_t{3} << 20;
+constexpr std::size_t kUnboundedUpload = std::numeric_limits<std::size_t>::max();
+constexpr double kStagedUploadBudgetMs = 4.0;
+
 struct SceneRenderer::WorldStreamingState
 {
     // One CPU window and two GPU windows, regardless of journey length. A future owns
@@ -443,6 +420,7 @@ struct SceneRenderer::WorldStreamingState
     int quality = -1;
     float vegetation = 0;
     std::size_t uploaded = 0;
+    std::size_t uploadedSegment = 0;
     bool generationRecorded = false;
     std::uint64_t prefetchHits = 0;
     std::uint64_t synchronousBuilds = 0;
@@ -470,14 +448,28 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
         routePointCacheMisses_ += stream.geometry->cacheMisses;
         stream.generationRecorded = true;
     };
-    const auto uploadOne = [&] {
+    const auto uploadOne = [&](std::size_t sliceBytes,std::size_t& submitted) {
         const auto uploadStart = std::chrono::steady_clock::now();
+        // One bounded slice of one profile-safe segment per call: large materials span several
+        // calls (frames) without a single long submission. Synchronous loads take a segment whole.
         auto& target = stream.staged[stream.uploaded];
         const auto& data = stream.geometry->meshes[stream.uploaded].data();
+        const auto& segments = stream.geometry->segments[stream.uploaded];
         if (data.empty()) target.reset();
-        else if (target) worldBufferReuses_ += static_cast<std::uint64_t>(target->replace(device_,data));
-        else target = std::make_unique<GpuMesh>(device_,data,true);
-        ++stream.uploaded;
+        else
+        {
+            if (!target) target = std::make_unique<GpuMesh>();
+            int reused = 0;
+            if (target->stageSegment(device_,data,segments,stream.uploadedSegment,sliceBytes,reused,
+                                     submitted))
+                ++stream.uploadedSegment;
+            worldBufferReuses_ += static_cast<std::uint64_t>(reused);
+        }
+        if (data.empty() || stream.uploadedSegment >= segments.size())
+        {
+            ++stream.uploaded;
+            stream.uploadedSegment = 0;
+        }
         const double ms = std::chrono::duration<double,std::milli>(
             std::chrono::steady_clock::now()-uploadStart).count();
         worldUploadTotalMs_ += ms;
@@ -490,7 +482,9 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
         stream.quality = graphicsQuality_;
         stream.vegetation = vegetationDistanceMetres_;
         stream.uploaded = 0;
+        stream.uploadedSegment = 0;
         stream.generationRecorded = false;
+        for (auto& staged : stream.staged) if (staged) staged->resetStaging();
     };
     // Quality/range changes, teleports and reversals must never publish obsolete output.
     if (stream.target != -1 && (stream.quality != graphicsQuality_
@@ -521,7 +515,8 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
         recordGeneration();
         // Initial load / a discontinuous jump still needs a complete scene immediately.
         // A normal boundary only swaps the already prepared buffers and counters.
-        while (stream.uploaded < kWorldMaterialCount) uploadOne();
+        std::size_t submitted = 0;
+        while (stream.uploaded < kWorldMaterialCount) uploadOne(kUnboundedUpload,submitted);
         std::array<std::unique_ptr<GpuMesh>*,kWorldMaterialCount> active = {
             &terrain_, &foliageMaterial_, &needleMaterial_, &leafSprays_, &needleSprays_,
             &roofMaterial_, &waterMaterial_, &facadeMaterial_, &renderedFacadeMaterial_,
@@ -544,14 +539,37 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
             // Empty materials need no upload and must not consume a whole frame. Low
             // quality has many empty slots; wasting fourteen frames could miss a boundary
             // even when the few actual uploads take only milliseconds.
+            std::size_t submitted = 0;
             const auto skipEmpty = [&] {
                 while (stream.uploaded < kWorldMaterialCount
-                    && stream.geometry->meshes[stream.uploaded].data().empty()) uploadOne();
+                    && stream.geometry->meshes[stream.uploaded].data().empty())
+                    uploadOne(kUploadSliceBytes,submitted);
             };
             skipEmpty();
-            // At most one non-empty material submission; the current scene is untouched.
-            if (stream.uploaded < kWorldMaterialCount) uploadOne();
-            skipEmpty();
+            // Stage slices into the hidden GPU window until a small per-frame budget is spent;
+            // the current scene is untouched. Small materials then share a frame. When fast
+            // travel brings the boundary close, keep going until this frame's share is sent.
+            std::size_t remainingBytes = 0;
+            for (std::size_t i = stream.uploaded; i < kWorldMaterialCount; ++i)
+            {
+                const auto& data = stream.geometry->meshes[i].data();
+                remainingBytes += data.vertices.size()*sizeof(LitColorVertex)
+                                + data.indices.size()*sizeof(std::uint32_t);
+            }
+            const double boundary = (static_cast<double>(current)+(service.direction < 0 ? 0.0 : 1.0))
+                                  * world.chunkLength();
+            const std::size_t urgent = stagedUploadBytesPerFrame(remainingBytes,
+                boundary-service.routeDistanceMetres,streamingMetresPerFrame_);
+            const auto stagingStart = std::chrono::steady_clock::now();
+            while (stream.uploaded < kWorldMaterialCount)
+            {
+                uploadOne(kUploadSliceBytes,submitted);
+                skipEmpty();
+                if (std::chrono::duration<double,std::milli>(
+                        std::chrono::steady_clock::now()-stagingStart).count() >= kStagedUploadBudgetMs
+                    && submitted >= urgent)
+                    break;
+            }
         }
     }
     if (stream.target == -1 && next != current)
@@ -573,6 +591,151 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
         std::chrono::steady_clock::now()-begin).count();
     worldRebuildTotalMs_ += ms;
     worldRebuildMaxMs_ = std::max(worldRebuildMaxMs_,ms);
+}
+
+struct SceneRenderer::TrackStreamingState
+{
+    // One CPU batch and two GPU batches, mirroring the world window: a future owns the CPU
+    // batch while it is generated; only the render thread creates or swaps GPU buffers.
+    std::unique_ptr<TrackGeometry> geometry = std::make_unique<TrackGeometry>();
+    std::future<std::unique_ptr<TrackGeometry>> worker;
+    std::array<std::unique_ptr<GpuMesh>,kTrackMaterialCount> staged;
+    double target = -1;
+    int quality = -1;
+    std::size_t uploaded = 0;
+    std::size_t uploadedSegment = 0;
+    std::uint64_t prefetchHits = 0;
+    std::uint64_t synchronousBuilds = 0;
+    std::uint64_t latePrefetches = 0;
+};
+
+void SceneRenderer::updateTrack(const Sim::Route& route, const Sim::ServiceState& service)
+{
+    const auto begin = std::chrono::steady_clock::now();
+    if (!trackStreaming_) trackStreaming_ = std::make_unique<TrackStreamingState>();
+    auto& stream = *trackStreaming_;
+    const auto anchorFor = [&](double distance) {
+        return std::clamp(std::round(distance/500.0)*500.0,0.0,route.lengthMetres());
+    };
+    const double requested = anchorFor(service.routeDistanceMetres);
+    const double next = anchorFor(requested+(service.direction < 0 ? -500.0 : 500.0));
+    const auto finished = [&] {
+        return !stream.worker.valid()
+            || stream.worker.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    };
+    const auto collect = [&] {
+        if (!stream.worker.valid()) return;
+        stream.geometry = stream.worker.get();
+        trackGenerationMaxMs_ = std::max(trackGenerationMaxMs_,stream.geometry->generationMs);
+    };
+    const auto uploadOne = [&](std::size_t sliceBytes,std::size_t& submitted) {
+        const auto& data = stream.geometry->materials()[stream.uploaded]->data();
+        const auto& segments = stream.geometry->segments[stream.uploaded];
+        auto& staged = stream.staged[stream.uploaded];
+        if (data.empty()) staged.reset();
+        else
+        {
+            if (!staged) staged = std::make_unique<GpuMesh>();
+            int reused = 0;
+            if (staged->stageSegment(device_,data,segments,stream.uploadedSegment,sliceBytes,reused,
+                                     submitted))
+                ++stream.uploadedSegment;
+        }
+        if (data.empty() || stream.uploadedSegment >= segments.size())
+        {
+            ++stream.uploaded;
+            stream.uploadedSegment = 0;
+        }
+    };
+    const auto resetJob = [&](double anchor) {
+        stream.target = anchor;
+        stream.quality = graphicsQuality_;
+        stream.uploaded = 0;
+        stream.uploadedSegment = 0;
+        for (auto& staged : stream.staged) if (staged) staged->resetStaging();
+    };
+    // Quality changes, teleports and reversals must never publish an obsolete batch.
+    if (stream.target >= 0 && (stream.quality != graphicsQuality_
+        || (stream.target != requested && stream.target != next)))
+    {
+        collect();
+        stream.target = -1;
+    }
+    if (!trackDetail_ || requested != trackAnchorDistance_)
+    {
+        if (stream.target == requested)
+        {
+            if (finished() && !stream.worker.valid() && stream.uploaded == kTrackMaterialCount)
+                ++stream.prefetchHits;
+            else ++stream.latePrefetches;
+            collect();
+        }
+        else
+        {
+            // Initial load, teleport or a quality change: build the batch immediately.
+            collect();
+            resetJob(requested);
+            stream.geometry->build(route,requested,graphicsQuality_);
+            trackGenerationMaxMs_ = std::max(trackGenerationMaxMs_,stream.geometry->generationMs);
+            ++stream.synchronousBuilds;
+        }
+        std::size_t submitted = 0;
+        while (stream.uploaded < kTrackMaterialCount) uploadOne(kUnboundedUpload,submitted);
+        trackDetail_.swap(stream.staged[0]);
+        trackBedMaterial_.swap(stream.staged[1]);
+        railHeadMaterial_.swap(stream.staged[2]);
+        tracksideKilometrePosts_ = stream.geometry->kilometrePosts;
+        trackFastenerAssemblies_ = stream.geometry->fastenerAssemblies;
+        trackTurnoutPointMotors_ = stream.geometry->turnoutPointMotors;
+        trackTurnoutBladeAssemblies_ = stream.geometry->turnoutBladeAssemblies;
+        trackAnchorDistance_ = requested;
+        stream.target = -1;
+        ++trackRebuilds_;
+    }
+    else if (stream.target >= 0)
+    {
+        if (stream.worker.valid() && finished()) collect();
+        if (!stream.worker.valid())
+        {
+            // Same per-frame staging budget and urgency rule as the world window; the anchor
+            // switches halfway between anchors.
+            std::size_t remainingBytes = 0;
+            for (std::size_t i = stream.uploaded; i < kTrackMaterialCount; ++i)
+            {
+                const auto& data = stream.geometry->materials()[i]->data();
+                remainingBytes += data.vertices.size()*sizeof(LitColorVertex)
+                                + data.indices.size()*sizeof(std::uint32_t);
+            }
+            const double boundary = requested+(service.direction < 0 ? -250.0 : 250.0);
+            const std::size_t urgent = stagedUploadBytesPerFrame(remainingBytes,
+                boundary-service.routeDistanceMetres,streamingMetresPerFrame_);
+            std::size_t submitted = 0;
+            const auto stagingStart = std::chrono::steady_clock::now();
+            while (stream.uploaded < kTrackMaterialCount)
+            {
+                uploadOne(kUploadSliceBytes,submitted);
+                if (std::chrono::duration<double,std::milli>(
+                        std::chrono::steady_clock::now()-stagingStart).count() >= kStagedUploadBudgetMs
+                    && submitted >= urgent)
+                    break;
+            }
+        }
+    }
+    if (stream.target < 0 && next != requested)
+    {
+        resetJob(next);
+        // The job owns its route copy and CPU batch; destruction joins the future.
+        stream.worker = std::async(std::launch::async,
+            [geometry=std::move(stream.geometry), routeCopy=route, anchor=next,
+             quality=graphicsQuality_]() mutable {
+                geometry->build(routeCopy,anchor,quality);
+                return std::move(geometry);
+            });
+    }
+    const double ms = std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-begin).count();
+    trackRebuildTotalMs_ += ms;
+    trackRebuildMaxMs_ = std::max(trackRebuildMaxMs_,ms);
 }
 
 SceneRenderer::SceneRenderer(GraphicsDevice& device, float vegetationDistanceMetres,
@@ -1200,13 +1363,16 @@ void SceneRenderer::setGraphicsQuality(int quality)
     worldAnchorChunk_ = -1;
 }
 
-void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
+void TrackGeometry::build(const Sim::Route& route, double anchorDistance, int graphicsQuality)
 {
+    const auto generationStart = std::chrono::steady_clock::now();
+    anchor = anchorDistance;
+    quality = graphicsQuality;
     constexpr double kSegmentLength = 6.0;
     constexpr double kTrackRadius = 1'000.0;
-    MeshBuilder track;
-    MeshBuilder trackBedMaterial;
-    MeshBuilder railHeadMaterial;
+    track.clear();
+    trackBedMaterial.clear();
+    railHeadMaterial.clear();
     // Stable capacities avoid allocator growth/fragmentation every time the 2 km sleeper and rail
     // batch recentres. Excess capacity is modest compared with the resulting GPU buffers.
     track.reserve(420'000, 650'000);
@@ -1216,13 +1382,13 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
     const double begin = std::max(-kTerminalTrackOverrunMetres, anchorDistance - kTrackRadius);
     const double end = std::min(route.lengthMetres()+kTerminalTrackOverrunMetres,
                                 anchorDistance + kTrackRadius);
-    const double fastenerRadius = graphicsQuality_ == 0 ? 360.0
-                                : graphicsQuality_ == 1 ? 460.0 : 560.0;
-    tracksideKilometrePosts_ = 0;
-    trackFastenerAssemblies_ = 0;
-    trackTurnoutPointMotors_ = 0;
-    trackTurnoutBladeAssemblies_ = 0;
-    const auto addTrackTopQuad = [&track](const Matrix& placement, float x0, float x1,
+    const double fastenerRadius = graphicsQuality == 0 ? 360.0
+                                : graphicsQuality == 1 ? 460.0 : 560.0;
+    kilometrePosts = 0;
+    fastenerAssemblies = 0;
+    turnoutPointMotors = 0;
+    turnoutBladeAssemblies = 0;
+    const auto addTrackTopQuad = [this](const Matrix& placement, float x0, float x1,
                                           float z0, float z1, float y,
                                           const Color& color) {
         track.addQuad(
@@ -1355,7 +1521,7 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
                                     -0.064f,0.064f,0.010f,Color(126,87,58,255));
                     addTrackTopQuad(sleeperPlacement,centre+0.088f,centre+0.145f,
                                     -0.064f,0.064f,0.010f,Color(126,87,58,255));
-                    ++trackFastenerAssemblies_;
+                    ++fastenerAssemblies;
                 }
             }
         }
@@ -1440,8 +1606,8 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
                 stationSidingLateral(route,frogInnerDistance).value_or(0.0)
                     + branchInnerRailOffset,
                 0.072f,0.074f,Color(151,158,157,255));
-            ++trackTurnoutPointMotors_;
-            ++trackTurnoutBladeAssemblies_;
+            ++turnoutPointMotors;
+            ++turnoutBladeAssemblies;
         }
     }
 
@@ -1477,14 +1643,12 @@ void SceneRenderer::rebuildTrack(const Sim::Route& route, double anchorDistance)
                          kInwardFaceLateral,2.00f,Color(45,49,48,255));
         addRouteSignText(track,route,anchorDistance,kilometres,markerDistance,
                          kInwardFaceLateral,1.66f,Color(45,49,48,255));
-        ++tracksideKilometrePosts_;
+        ++kilometrePosts;
     }
-    // CNA's graphics lifetime contract snapshots submitted buffer work, so replacing the owner
-    // here is safe even when the renderer replays commands after this method returns.
-    trackDetail_ = std::make_unique<GpuMesh>(device_, track.take());
-    trackBedMaterial_ = std::make_unique<GpuMesh>(device_,trackBedMaterial.take());
-    railHeadMaterial_ = std::make_unique<GpuMesh>(device_,railHeadMaterial.take());
-    trackAnchorDistance_ = anchorDistance;
+    for (std::size_t i=0;i<kTrackMaterialCount;++i)
+        segments[i]=meshSegments(materials()[i]->data());
+    generationMs = std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-generationStart).count();
 }
 
 void WorldGeometry::build(const Sim::Route& route,
@@ -1517,7 +1681,7 @@ void WorldGeometry::build(const Sim::Route& route,
     MeshBuilder& roofSurface=graphicsQuality_>=1 ? roofMaterial : mesh;
     // Seven high-quality chunks, a nearby station, and dense rural vegetation fit below these
     // capacities on the authored route. Reserving once keeps streaming rebuilds allocation-light.
-    terrain.reserve(4'000,6'000);
+    terrain.reserve(40'000,60'000);
     waterMaterial.reserve(1'200,1'800);
     facadeMaterial.reserve(2'000,3'000);
     renderedFacadeMaterial.reserve(2'000,3'000);
@@ -1547,6 +1711,18 @@ void WorldGeometry::build(const Sim::Route& route,
     counters.staticWorldTerminalShedColumns_ = 0;
     counters.staticWorldBridgeParapetPosts_ = 0;
     counters.staticWorldFencePosts_ = 0;
+    counters.staticWorldCableTroughUnits_ = 0;
+    counters.staticWorldVergeFlowerClumps_ = 0;
+    counters.staticWorldPalisadePosts_ = 0;
+    counters.staticWorldHouseOutbuildings_ = 0;
+    counters.staticWorldBlockBalconies_ = 0;
+    counters.staticWorldCanopyValanceBoards_ = 0;
+    counters.staticWorldTramlineSegments_ = 0;
+    counters.worldGpuBytes_ = 0;
+    counters.worldGpuSegments_ = 0;
+    counters.largestMaterialBytes_ = 0;
+    counters.largestMaterialVertices_ = 0;
+    counters.largestMaterial_ = -1;
     counters.staticWorldPlatformSurfaceJoints_ = 0;
     counters.staticWorldPlatformCanopyLights_ = 0;
     counters.staticWorldPlatformCanopyDrainageAssemblies_ = 0;
@@ -1560,6 +1736,7 @@ void WorldGeometry::build(const Sim::Route& route,
     counters.staticWorldTracksideDrainageSections_ = 0;
     counters.staticWorldTracksideVergeTufts_ = 0;
     counters.staticWorldFieldBoundarySegments_ = 0;
+    counters.staticWorldFieldBoundaryTrees_ = 0;
     counters.staticWorldDistantWoodlandTrees_ = 0;
     counters.staticWorldDistantRidgeMasses_ = 0;
     counters.staticWorldTreeBranchCues_ = 0;
@@ -1821,6 +1998,43 @@ void WorldGeometry::build(const Sim::Route& route,
                     continue;
                 }
                 if (graphicsQuality_>=1 && pose.urbanity<=0.55
+                    && std::max(std::abs(l0),std::abs(l1))<=26
+                    && d0>=chunk.beginDistance && d0<chunk.endDistance)
+                {
+                    // The near verge is the lower third of every seated window view: metre-scale
+                    // cess, mown, fence-line, drain and headland zones replace one flat colour per
+                    // 50 m cell. Cuts split on the source diagonal and never change terrain height.
+                    const std::array<Vector3,4> corners={Vector3{a.x,a.y,a.z},Vector3{b.x,b.y,b.z},
+                                                       Vector3{c.x,c.y,c.z},Vector3{d.x,d.y,d.z}};
+                    std::array<float,32> vCuts{};
+                    std::size_t vCount=0;
+                    vCuts[vCount++]=0;
+                    for (double sign : {-1.0,1.0})
+                        for (const double cut : vergeLateralCuts(graphicsQuality_))
+                            if (sign*cut>l0+0.05 && sign*cut<l1-0.05 && vCount<vCuts.size()-1)
+                                vCuts[vCount++]=static_cast<float>((sign*cut-l0)/(l1-l0));
+                    std::sort(vCuts.begin()+1,vCuts.begin()+static_cast<std::ptrdiff_t>(vCount));
+                    vCuts[vCount++]=1;
+                    // The running-line band holds the visible verge between ballast and fence; a
+                    // finer detail tile than the fields gives it grass-scale grain.
+                    const bool runningBand=std::max(std::abs(l0),std::abs(l1))<=kVergeFenceLineEnd+0.01;
+                    const float tileMetres=runningBand ? 3.0f : kTerrainTextureTileMetres;
+                    std::array<float,21> uCuts{};
+                    const int alongSegments=std::clamp(static_cast<int>(std::lround(
+                        (d1-d0)/vergeAlongStep(graphicsQuality_))),1,20);
+                    for (int i=0;i<=alongSegments;++i)
+                        uCuts[static_cast<std::size_t>(i)]=static_cast<float>(i)/static_cast<float>(alongSegments);
+                    addGridTerrainCell(terrain,corners,
+                        std::span<const float>{uCuts.data(),static_cast<std::size_t>(alongSegments+1)},
+                        std::span<const float>{vCuts.data(),vCount},
+                        [&](float u,float v) { return ruralVergeTint(d0+(d1-d0)*u,l0+(l1-l0)*v); },
+                        [&](float u,float v) {
+                            return Vector2{static_cast<float>(l0+(l1-l0)*v)/tileMetres,
+                                           static_cast<float>(d0+(d1-d0)*u)/tileMetres};
+                        });
+                    continue;
+                }
+                if (graphicsQuality_>=1 && pose.urbanity<=0.55
                     && std::min(std::abs(l0),std::abs(l1))>=26
                     && std::max(std::abs(l0),std::abs(l1))<=260)
                 {
@@ -1837,6 +2051,41 @@ void WorldGeometry::build(const Sim::Route& route,
                                        static_cast<float>(d0+(d1-d0)*u)/kTerrainTextureTileMetres};
                     };
                     addSubdividedTerrainCell(terrain,corners,colour,uv);
+                    continue;
+                }
+                if (graphicsQuality_>=1 && pose.urbanity>0.55 && !pose.tunnel
+                    && std::max(std::abs(l0),std::abs(l1))<=kUrbanVergeEnd+0.01
+                    && d0>=chunk.beginDistance && d0<chunk.endDistance)
+                {
+                    // Urban lineside: gravel cess, weedy ballast dust and a scrub strip along the
+                    // palisade replace the flat street-ground gradient below the window.
+                    const std::array<Vector3,4> corners={Vector3{a.x,a.y,a.z},Vector3{b.x,b.y,b.z},
+                                                       Vector3{c.x,c.y,c.z},Vector3{d.x,d.y,d.z}};
+                    std::array<float,24> vCuts{};
+                    std::size_t vCount=0;
+                    vCuts[vCount++]=0;
+                    for (double sign : {-1.0,1.0})
+                        for (const double cut : urbanVergeLateralCuts(graphicsQuality_))
+                            if (sign*cut>l0+0.05 && sign*cut<l1-0.05 && vCount<vCuts.size()-1)
+                                vCuts[vCount++]=static_cast<float>((sign*cut-l0)/(l1-l0));
+                    std::sort(vCuts.begin()+1,vCuts.begin()+static_cast<std::ptrdiff_t>(vCount));
+                    vCuts[vCount++]=1;
+                    std::array<float,21> uCuts{};
+                    const int alongSegments=std::clamp(static_cast<int>(std::lround(
+                        (d1-d0)/vergeAlongStep(graphicsQuality_))),1,20);
+                    for (int i=0;i<=alongSegments;++i)
+                        uCuts[static_cast<std::size_t>(i)]=static_cast<float>(i)/static_cast<float>(alongSegments);
+                    const double routeLength=route.lengthMetres();
+                    addGridTerrainCell(terrain,corners,
+                        std::span<const float>{uCuts.data(),static_cast<std::size_t>(alongSegments+1)},
+                        std::span<const float>{vCuts.data(),vCount},
+                        [&](float u,float v) {
+                            return urbanVergeTint(d0+(d1-d0)*u,l0+(l1-l0)*v,routeLength);
+                        },
+                        [&](float u,float v) {
+                            return Vector2{static_cast<float>(l0+(l1-l0)*v)/3.0f,
+                                           static_cast<float>(d0+(d1-d0)*u)/3.0f};
+                        });
                     continue;
                 }
                 const float u0 = static_cast<float>(l0) / kTerrainTextureTileMetres;
@@ -2720,30 +2969,227 @@ void WorldGeometry::build(const Sim::Route& route,
             }
         }
 
-        // Continuous terrain-following hedges divide the broad rural colour domains into
-        // parcels. The 500 m absolute rhythm matches the tint cells above.
-        double boundaryDistance = std::ceil(chunk.beginDistance/500.0)*500.0;
-        for (; boundaryDistance < chunk.endDistance; boundaryDistance += 500.0)
+        if (graphicsQuality_>=1 && !pose.bridge && !pose.tunnel && pose.adjacentWaterSide == 0)
         {
-            const Sim::RoutePose boundaryPose = route.sample(boundaryDistance);
-            bool nearStation = false;
-            for (const Sim::Station& station : route.stations())
-                nearStation = nearStation
-                    || std::abs(station.distanceMetres-boundaryDistance) < 700.0;
-            if (nearStation || boundaryPose.tunnel || boundaryPose.bridge
-                || boundaryPose.urbanity >= 0.45 || boundaryPose.adjacentWaterSide != 0)
-                continue;
-            for (double side : {-1.0,1.0})
+            // Precast cable troughing on the open cess, wildflower drifts along the inner rural
+            // fence line and a steel palisade between urban railway and street. Both use absolute route slots and stop at platforms, structures and
+            // level crossings, so they neither pop at chunk seams nor cross a road.
+            std::array<double,8> crossings{};
+            std::size_t crossingCount=0;
+            for (const World::WorldFeature& feature : chunk.features)
+                if (feature.kind==World::FeatureKind::LevelCrossing && crossingCount<crossings.size())
+                    crossings[crossingCount++]=feature.routeDistance;
+            const auto clearOfStructures=[&](double distance,double margin,bool rural) {
+                const Sim::RoutePose sample=route.sample(distance);
+                if (sample.tunnel || sample.bridge || (rural && sample.urbanity>=0.55)
+                    || sample.adjacentWaterSide!=0) return false;
+                const auto& nearest=route.stations()[route.nearestStation(distance)];
+                if (std::abs(nearest.distanceMetres-distance)<260.0) return false;
+                for (std::size_t i=0;i<crossingCount;++i)
+                    if (std::abs(crossings[i]-distance)<margin) return false;
+                return true;
+            };
+            for (double unit=std::ceil(chunk.beginDistance/kCableTroughUnitLength)*kCableTroughUnitLength;
+                 unit<chunk.endDistance;unit+=kCableTroughUnitLength)
             {
-                addTerrainHedge(graphicsQuality_>=1 ? foliageMaterial : mesh,[&](float x,float z) {
-                    auto point=terrainSurfacePoint(boundaryDistance+z,side*60.0+x);
-                    point.Y -= 0.08f; // Bury the base without flattening the sloping crown.
-                    return point;
-                },96.0f,1.10f,0.95f,Color(55,92,48,255),
-                    static_cast<std::uint32_t>(boundaryDistance)+(side < 0 ? 31U : 0U),
-                    graphicsQuality_>=1 ? &leafSprays : nullptr);
-                counters.staticWorldFieldBoundarySegments_ += 10; // Ten nominal 9.6 m spans, now joined.
+                const double unitCentre=unit+kCableTroughUnitLength*0.5;
+                if (!clearOfStructures(unitCentre,14.0,false)) continue;
+                const LocalRoutePoint troughPoint=localRoutePoint(
+                    route,anchorDistance,unitCentre,kCableTroughLateral);
+                const float troughGround=terrainOffset(route.sample(unitCentre),unitCentre,kCableTroughLateral);
+                addCableTroughUnit(mesh,Matrix::CreateRotationY(troughPoint.yaw)
+                    *Matrix::CreateTranslation(troughPoint.x,troughPoint.y+troughGround,troughPoint.z),
+                    static_cast<unsigned>(static_cast<std::int64_t>(unit/kCableTroughUnitLength)%17));
+                ++counters.staticWorldCableTroughUnits_;
             }
+            const double flowerStep=vergeFlowerStep(graphicsQuality_);
+            for (double slot=std::ceil(chunk.beginDistance/flowerStep)*flowerStep;
+                 slot<chunk.endDistance;slot+=flowerStep)
+                for (int side : {-1,1})
+                {
+                    const auto placement=vergeFlowerPlacement(slot,side);
+                    if (placement.distance<chunk.beginDistance || placement.distance>=chunk.endDistance
+                        || !clearOfStructures(placement.distance,10.0,true)) continue;
+                    // The parallel track's ballast reaches the left fence line near stations.
+                    if (side<0 && std::abs(route.parallelTrackLateralMetres(placement.distance))+3.7
+                                  >std::abs(placement.lateral)) continue;
+                    LocalRoutePoint root=localRoutePoint(
+                        route,anchorDistance,placement.distance,placement.lateral);
+                    root.y+=terrainOffset(route.sample(placement.distance),placement.distance,
+                                          placement.lateral);
+                    addVergeFlowerClump(mesh,Vector3{root.x,root.y,root.z},placement);
+                    ++counters.staticWorldVergeFlowerClumps_;
+                }
+            if (!linesideFenceAllowed(pose))
+            {
+                // Absolute 2.75 m slots: a span is drawn by the chunk holding its first post when
+                // both of its posts are clear, so runs continue across chunk seams and stop on a
+                // post at stations, structures and level crossings.
+                const auto urbanBoundary=[&](double distance) {
+                    return route.sample(distance).urbanity>=0.62 && clearOfStructures(distance,12.0,false);
+                };
+                const auto palisadePoint=[&](double distance,double lateral) {
+                    auto p=localRoutePoint(route,anchorDistance,distance,lateral);
+                    p.y+=terrainOffset(route.sample(distance),distance,lateral);
+                    return p;
+                };
+                const bool detailed=graphicsQuality_>=2;
+                bool previousOpen=urbanBoundary(std::ceil(chunk.beginDistance/kPalisadePostSpacing)
+                    *kPalisadePostSpacing-kPalisadePostSpacing);
+                for (double post=std::ceil(chunk.beginDistance/kPalisadePostSpacing)*kPalisadePostSpacing;
+                     post<chunk.endDistance;post+=kPalisadePostSpacing)
+                {
+                    const bool open=urbanBoundary(post);
+                    const bool nextOpen=open && urbanBoundary(post+kPalisadePostSpacing);
+                    if (open && (previousOpen || nextOpen))
+                        for (double side : {-1.0,1.0})
+                        {
+                            addPalisadePost(mesh,palisadePoint,post,side*kPalisadeLateral);
+                            ++counters.staticWorldPalisadePosts_;
+                            if (nextOpen)
+                                addPalisadeSpan(mesh,palisadePoint,post,post+kPalisadePostSpacing,
+                                                side*kPalisadeLateral,detailed);
+                        }
+                    previousOpen=open;
+                }
+            }
+        }
+
+        // Field boundaries follow the irregular per-side parcel edges of the surface tint:
+        // hedges, gated hedges, hedgerow trees and open margins of differing extent replace the
+        // former identical hedge pair at every 500 m.
+        for (int side : {-1,1})
+        {
+            const auto firstParcel=ruralParcelIndex(chunk.beginDistance,side);
+            const auto lastParcel=ruralParcelIndex(chunk.endDistance,side)+1;
+            for (auto parcel=firstParcel;parcel<=lastParcel;++parcel)
+            {
+                const double boundaryDistance=ruralParcelBoundary(parcel,side);
+                if (boundaryDistance<chunk.beginDistance || boundaryDistance>=chunk.endDistance)
+                    continue;
+                const Sim::RoutePose boundaryPose = route.sample(boundaryDistance);
+                bool nearStation = false;
+                for (const Sim::Station& station : route.stations())
+                    nearStation = nearStation
+                        || std::abs(station.distanceMetres-boundaryDistance) < 700.0;
+                if (nearStation || boundaryPose.tunnel || boundaryPose.bridge
+                    || boundaryPose.urbanity >= 0.45 || boundaryPose.adjacentWaterSide != 0)
+                    continue;
+                const FieldBoundaryLayout layout=fieldBoundaryLayout(parcel,side);
+                if (layout.kind==FieldBoundaryKind::Open) continue;
+                const auto addHedgeRun=[&](float inner,float outer,float height,std::uint32_t seed) {
+                    if (outer-inner<3.0f) return;
+                    const float centre=(inner+outer)*0.5f;
+                    addTerrainHedge(graphicsQuality_>=1 ? foliageMaterial : mesh,[&](float x,float z) {
+                        auto point=terrainSurfacePoint(boundaryDistance+z,side*static_cast<double>(centre+x));
+                        point.Y -= 0.08f; // Bury the base without flattening the sloping crown.
+                        return point;
+                    },outer-inner,1.10f,height,Color(55,92,48,255),seed,
+                        graphicsQuality_>=1 ? &leafSprays : nullptr);
+                    counters.staticWorldFieldBoundarySegments_ +=
+                        std::max(1,static_cast<int>(std::lround((outer-inner)/9.6f)));
+                };
+                const float inner=12.0f;
+                if (layout.kind==FieldBoundaryKind::GatedHedge)
+                {
+                    addHedgeRun(inner,layout.gateLateral-2.5f,layout.height,layout.seed);
+                    addHedgeRun(layout.gateLateral+2.5f,layout.outerLateral,layout.height,layout.seed+7U);
+                    continue;
+                }
+                const bool treeLine=layout.kind==FieldBoundaryKind::TreeLine;
+                addHedgeRun(inner,layout.outerLateral,treeLine ? layout.height*0.75f : layout.height,
+                            layout.seed);
+                if (!treeLine) continue;
+                // Hedgerow standards: broadleaf trees grown out of the hedge every 18-30 m.
+                float lateral=22.0f+static_cast<float>(layout.seed%9U);
+                while (lateral<layout.outerLateral-6.0f)
+                {
+                    const double treeLateral=side*static_cast<double>(lateral);
+                    const auto seed=treeShapeSeed(boundaryDistance,treeLateral,11U);
+                    lateral+=18.0f+static_cast<float>(seed%13U);
+                    const Vector3 treeRoot=terrainSurfacePoint(
+                        boundaryDistance+0.35*std::sin(static_cast<double>(seed%31U)),treeLateral);
+                    const float scale=1.05f+static_cast<float>(seed%5U)*0.11f;
+                    addTaperedTreeTrunk(mesh,treeRoot,scale,3.8f,graphicsQuality_>=1 ? 7 : 5,
+                                        Color(88,68,46,255));
+                    const Color foliage=seed%2U==0U ? Color(46,95,45,255) : Color(52,102,49,255);
+                    const Color foliageLight=seed%2U==0U ? Color(66,118,56,255) : Color(72,124,60,255);
+                    if (graphicsQuality_>=1)
+                    {
+                        addClusteredBroadleafCrown(foliageMaterial,treeRoot,scale,seed,foliage,foliageLight,
+                                                   graphicsQuality_==1);
+                        addBroadleafEdgeSprays(leafSprays,treeRoot,scale,seed,foliageLight,
+                                               graphicsQuality_==1);
+                    }
+                    else
+                        mesh.addFoliageLobe(treeRoot+Vector3{0,4.4f*scale,0},
+                                            Vector3{1.8f*scale,1.7f*scale,1.7f*scale},6,4,foliage,false);
+                    ++counters.staticWorldFieldBoundaryTrees_;
+                }
+            }
+        }
+
+        if (graphicsQuality_>=1 && pose.urbanity < 0.45 && !pose.tunnel && !pose.bridge
+            && pose.adjacentWaterSide == 0)
+        {
+            // Tramlines on stubble and ploughed parcels: darker paired wheelings sampled on the
+            // terrain surface every 10 m, stopping short of headlands, buildings and crop plots.
+            const auto obstructed=[&](double distance,double lateral) {
+                for (const World::WorldFeature& feature : chunk.features)
+                {
+                    double halfAlong=0,halfAcross=0;
+                    switch (feature.kind)
+                    {
+                        case World::FeatureKind::FieldCrop: halfAlong=34; halfAcross=13; break;
+                        case World::FeatureKind::House: halfAlong=24; halfAcross=9; break;
+                        case World::FeatureKind::Farmstead: halfAlong=22; halfAcross=20; break;
+                        case World::FeatureKind::HayBale: halfAlong=4; halfAcross=4; break;
+                        case World::FeatureKind::PowerPylon:
+                        case World::FeatureKind::Substation: halfAlong=18; halfAcross=18; break;
+                        default: continue;
+                    }
+                    if (std::abs(feature.routeDistance-distance)<halfAlong*feature.scale
+                        && std::abs(feature.lateralMetres-lateral)<halfAcross*feature.scale) return true;
+                }
+                return false;
+            };
+            const Color wheeling(98,88,66,255);
+            constexpr double kTramlineStep=10.0;
+            for (double side : {-1.0,1.0})
+                for (const double line : kTramlineLaterals)
+                {
+                    const double centre=side*line;
+                    for (double d=std::ceil(chunk.beginDistance/kTramlineStep)*kTramlineStep;
+                         d<chunk.endDistance;d+=kTramlineStep)
+                    {
+                        const double e=std::min(d+kTramlineStep,chunk.endDistance);
+                        const auto parcel=ruralParcelIndex(d,side);
+                        if (ruralParcelIndex(e,side)!=parcel || !ruralParcelArable(d,centre)
+                            || d-ruralParcelBoundary(parcel,side)<kTramlineHeadland
+                            || ruralParcelBoundary(parcel+1,side)-e<kTramlineHeadland
+                            || obstructed(d,centre) || obstructed(e,centre)
+                            || !World::terrainFeatureAllowed(route.sample(d),centre)) continue;
+                        for (const double wheel : {-kTramlineHalfGauge,kTramlineHalfGauge})
+                        {
+                            const double l0=centre+wheel-kTramlineWheelWidth*0.5;
+                            const double l1=centre+wheel+kTramlineWheelWidth*0.5;
+                            auto a=terrainSurfacePoint(d,l0),b=terrainSurfacePoint(e,l0);
+                            auto c=terrainSurfacePoint(e,l1),dd=terrainSurfacePoint(d,l1);
+                            for (auto* vertex : {&a,&b,&c,&dd}) vertex->Y+=0.035f;
+                            if (side>0) terrain.addTexturedQuad(a,b,c,dd,wheeling,
+                                {static_cast<float>(l0/8),static_cast<float>(d/8)},
+                                {static_cast<float>(l0/8),static_cast<float>(e/8)},
+                                {static_cast<float>(l1/8),static_cast<float>(e/8)},
+                                {static_cast<float>(l1/8),static_cast<float>(d/8)});
+                            else terrain.addTexturedQuad(dd,c,b,a,wheeling,
+                                {static_cast<float>(l1/8),static_cast<float>(d/8)},
+                                {static_cast<float>(l1/8),static_cast<float>(e/8)},
+                                {static_cast<float>(l0/8),static_cast<float>(e/8)},
+                                {static_cast<float>(l0/8),static_cast<float>(d/8)});
+                        }
+                        ++counters.staticWorldTramlineSegments_;
+                    }
+                }
         }
 
         if (pose.urbanity < 0.45 && !pose.tunnel && !pose.bridge)
@@ -3063,7 +3509,9 @@ void WorldGeometry::build(const Sim::Route& route,
                     // projected roof follows the fixed sunny light direction; it is not a
                     // shadow map and cannot cast onto another building or passing vehicle.
                     const auto envelope=feature.kind == World::FeatureKind::House
-                        ? houseEnvelope(scale) : feature.kind == World::FeatureKind::Townhouse
+                        ? houseEnvelope(scale,houseStyle(treeShapeSeed(
+                              feature.routeDistance,feature.lateralMetres,29U)))
+                        : feature.kind == World::FeatureKind::Townhouse
                         ? townhouseEnvelope(scale,feature.variant) : apartmentEnvelope(scale,feature.variant);
                     const double height = envelope.roofHeight;
                     const Vector3 sunlight = daylightDirection(featurePose.headingRadians);
@@ -3579,47 +4027,60 @@ void WorldGeometry::build(const Sim::Route& route,
                 }
                 case World::FeatureKind::House:
                 {
-                    const auto envelope=houseEnvelope(scale);
-                    const Color facadeColor(188,166,135,255);
+                    const HouseStyle style=houseStyle(treeShapeSeed(
+                        feature.routeDistance,feature.lateralMetres,29U));
+                    const auto envelope=houseEnvelope(scale,style);
                     addFacadeMaterial(renderedFacadeMaterial,point,
                                       feature.lateralMetres > 0.0,envelope.width,0.0f,
-                                      envelope.wallHeight,envelope.length,facadeColor);
+                                      envelope.wallHeight,envelope.length,style.facade);
+                    const bool closeHouse=graphicsQuality_>=1 && std::abs(point.z)<450;
                     addPitchedRoof(mesh,roofSurface,point.x,point.y+envelope.wallHeight,point.z,
                                    envelope.roofWidth,envelope.roofLength,
                                    envelope.roofHeight-envelope.wallHeight,point.yaw,
-                                   Color(121,63,54,255),
-                                   graphicsQuality_>=1 && std::abs(point.z)<450 ? envelope.width : 0.0f,
-                                   graphicsQuality_>=1 && std::abs(point.z)<450 ? envelope.wallHeight : 0.0f);
+                                   style.roof,closeHouse ? envelope.width : 0.0f,
+                                   closeHouse ? envelope.wallHeight : 0.0f);
                     const Matrix houseTransform = Matrix::CreateRotationY(point.yaw)
                                                 * Matrix::CreateTranslation(
                                                     point.x,point.y,point.z);
-                    const Vector3 chimney = Vector3::Transform(
-                        Vector3{1.55f*scale,7.25f*scale,1.85f*scale},houseTransform);
-                    addOrientedBox(mesh,chimney.X,chimney.Y,chimney.Z,
-                                   0.58f*scale,2.25f*scale,0.72f*scale,point.yaw,
-                                   Color(126,99,78,255));
-                    addOrientedBox(mesh,chimney.X,chimney.Y+1.14f*scale,chimney.Z,
-                                   0.72f*scale,0.15f*scale,0.86f*scale,point.yaw,
-                                   Color(79,69,61,255));
+                    // Chimney stacks: ridge-side, either hand, or a pair at both gable ends.
+                    const float stackTop=envelope.roofHeight+0.55f*scale;
+                    const auto addChimney=[&](float localX,float localZ) {
+                        const float base=envelope.wallHeight+0.6f*scale;
+                        const Vector3 stack=Vector3::Transform(
+                            Vector3{localX,(base+stackTop)*0.5f,localZ},houseTransform);
+                        addOrientedBox(mesh,stack.X,stack.Y,stack.Z,0.58f*scale,stackTop-base,
+                                       0.72f*scale,point.yaw,Color(126,99,78,255));
+                        addOrientedBox(mesh,stack.X,stack.Y+(stackTop-base)*0.5f+0.07f*scale,stack.Z,
+                                       0.72f*scale,0.15f*scale,0.86f*scale,point.yaw,
+                                       Color(79,69,61,255));
+                    };
+                    if (style.chimneys==1) addChimney(0.35f*scale,1.85f*scale);
+                    else if (style.chimneys==2) addChimney(-0.35f*scale,-1.85f*scale);
+                    else if (style.chimneys==3)
+                        for (float end : {-1.0f,1.0f}) addChimney(0.0f,end*4.55f*scale);
                     const double facade = feature.lateralMetres
                         - std::copysign(3.55 * static_cast<double>(scale), feature.lateralMetres);
+                    const std::array<float,2> floors={style.bungalow ? 1.65f : 2.0f,4.25f};
+                    const int floorCount=style.bungalow ? 1 : 2;
                     for (double zOffset : {-2.8, 0.0, 2.8})
                     {
                         LocalRoutePoint window = localRoutePoint(
                             route, anchorDistance,
                             feature.routeDistance + zOffset * static_cast<double>(scale), facade);
                         window.y = point.y;
-                        for (float floorHeight : {2.0f, 4.25f})
+                        for (int floor=0;floor<floorCount;++floor)
                         {
-                            // The ground-floor centre bay belongs to the entrance, not a window.
-                            if (zOffset==0.0 && floorHeight==2.0f) continue;
+                            const float floorHeight=floors[static_cast<std::size_t>(floor)];
+                            // The ground-floor door bay belongs to the entrance, not a window.
+                            if (floor==0 && zOffset==2.8*style.doorBay) continue;
                             addFacadeWindow(window,floorHeight*scale,
-                                            0.78f*scale,1.15f*scale,
+                                            (style.bungalow ? 1.05f : 0.78f)*scale,1.15f*scale,
                                             roomSeed(zOffset,static_cast<int>(floorHeight*4)));
                         }
                     }
-                    LocalRoutePoint door = localRoutePoint(
-                        route, anchorDistance, feature.routeDistance, facade);
+                    const double doorDistance=feature.routeDistance
+                        +2.8*static_cast<double>(style.doorBay)*static_cast<double>(scale);
+                    LocalRoutePoint door = localRoutePoint(route, anchorDistance, doorDistance, facade);
                     door.y = point.y;
                     addOrientedBox(mesh,door.x,door.y+0.95f*scale,door.z,
                                    0.12f,1.9f*scale,0.95f*scale,door.yaw,
@@ -3628,8 +4089,25 @@ void WorldGeometry::build(const Sim::Route& route,
                         addResidentialDoorKit(mesh,0.95f*scale,1.9f*scale,
                             Matrix::CreateRotationY(door.yaw+1.570796327f)
                                 *Matrix::CreateTranslation(door.x,door.y,door.z));
-                    addUrbanEntrancePath(feature.routeDistance,facade,
-                                         2.6f*scale,1.30f*scale);
+                    if (style.porch)
+                    {
+                        // A shallow lean-to canopy on two slim posts shelters the entrance.
+                        const double outward=-std::copysign(0.75*static_cast<double>(scale),
+                                                            feature.lateralMetres);
+                        const LocalRoutePoint canopy=localRoutePoint(
+                            route,anchorDistance,doorDistance,facade+outward);
+                        addOrientedBox(mesh,canopy.x,point.y+2.35f*scale,canopy.z,1.55f*scale,
+                                       0.10f*scale,1.85f*scale,canopy.yaw,style.roof);
+                        for (double post : {-0.82,0.82})
+                        {
+                            const LocalRoutePoint postPoint=localRoutePoint(route,anchorDistance,
+                                doorDistance+post*static_cast<double>(scale),facade+outward*1.85);
+                            addOrientedBox(mesh,postPoint.x,point.y+1.15f*scale,postPoint.z,
+                                           0.09f*scale,2.3f*scale,0.09f*scale,postPoint.yaw,
+                                           Color(214,210,200,255));
+                        }
+                    }
+                    addUrbanEntrancePath(doorDistance,facade,2.6f*scale,1.30f*scale);
                     for (double end : {-1.0,1.0})
                         for (double lateralOffset : {-1.65,1.65})
                         {
@@ -3639,11 +4117,30 @@ void WorldGeometry::build(const Sim::Route& route,
                                 feature.lateralMetres
                                     +lateralOffset*static_cast<double>(scale));
                             endWindow.y = point.y;
-                            for (float floorHeight : {2.0f,4.25f})
+                            for (int floor=0;floor<floorCount;++floor)
+                            {
+                                const float floorHeight=floors[static_cast<std::size_t>(floor)];
                                 addEndWallWindow(endWindow,floorHeight*scale,
                                                 0.82f*scale,1.10f*scale,
                                                 roomSeed(lateralOffset+end*8,static_cast<int>(floorHeight*4)));
+                            }
                         }
+                    if (World::houseHasOutbuilding(feature.variant,featurePose.urbanity))
+                    {
+                        const double outbuildingDistance=feature.routeDistance
+                            +World::houseOutbuildingDirection(feature.variant)
+                                *World::kHouseOutbuildingOffset*static_cast<double>(scale);
+                        LocalRoutePoint shed=localRoutePoint(route,anchorDistance,outbuildingDistance,
+                                                             feature.lateralMetres);
+                        shed.y+=terrainOffset(route.sample(outbuildingDistance),outbuildingDistance,
+                                              feature.lateralMetres);
+                        // Local +X points away from the railway on either side.
+                        const float awayYaw=feature.lateralMetres>0.0 ? shed.yaw : shed.yaw+3.14159265f;
+                        addRuralOutbuilding(mesh,mesh,Matrix::CreateRotationY(awayYaw)
+                            *Matrix::CreateTranslation(shed.x,shed.y,shed.z),scale,style.barn,
+                            style.facade,style.roof);
+                        ++counters.staticWorldHouseOutbuildings_;
+                    }
                     break;
                 }
                 case World::FeatureKind::Townhouse:
@@ -3728,12 +4225,12 @@ void WorldGeometry::build(const Sim::Route& route,
                 }
                 case World::FeatureKind::Apartment:
                 {
-                    const std::array<Color, 3> facades = {
-                        Color(164,154,141,255), Color(151,164,166,255), Color(178,159,145,255)};
+                    const BlockStyle style=blockStyle(treeShapeSeed(
+                        feature.routeDistance,feature.lateralMetres,31U));
                     const auto envelope=apartmentEnvelope(scale,feature.variant);
                     const float height = envelope.wallHeight;
                     const int floors = apartmentFloorCount(feature.variant);
-                    const Color& facadeColor = facades[feature.variant % facades.size()];
+                    const Color& facadeColor = style.facade;
                     addFacadeMaterial(renderedFacadeMaterial,point,
                                       feature.lateralMetres > 0.0,envelope.width,0.0f,
                                       height,envelope.length,facadeColor);
@@ -3762,6 +4259,37 @@ void WorldGeometry::build(const Sim::Route& route,
                                 window,(2.0f+static_cast<float>(floor)*2.35f)*scale,
                                 0.85f*scale,0.90f*scale,roomSeed(zOffset,floor));
                         }
+                    {
+                        // Plinth skin and first-floor string course on the railway facade, then
+                        // projecting balconies with railings on the chosen bay rhythm.
+                        const double towardTrack=-std::copysign(1.0,feature.lateralMetres);
+                        const LocalRoutePoint skin=localRoutePoint(route,anchorDistance,
+                            feature.routeDistance,facade+towardTrack*0.03);
+                        addOrientedBox(mesh,skin.x,point.y+0.55f*scale,skin.z,0.06f,1.1f*scale,
+                                       envelope.length+0.06f,skin.yaw,style.plinth);
+                        addOrientedBox(mesh,skin.x,point.y+3.22f*scale,skin.z,0.08f,0.16f*scale,
+                                       envelope.length+0.08f,skin.yaw,style.plinth);
+                        const bool closeBlock=graphicsQuality_>=1 && std::abs(point.z)<500.0f;
+                        for (int floor = 1; closeBlock && floor < floors; ++floor)
+                            for (double bay : {-4.2,-1.4,1.4,4.2})
+                            {
+                                if (!blockBayHasBalcony(style.balconyPattern,bay)) continue;
+                                const float slabY=point.y+(0.95f+static_cast<float>(floor)*2.35f)*scale;
+                                const LocalRoutePoint slab=localRoutePoint(route,anchorDistance,
+                                    feature.routeDistance+bay*static_cast<double>(scale),
+                                    facade+towardTrack*0.55*static_cast<double>(scale));
+                                addOrientedBox(mesh,slab.x,slabY,slab.z,1.1f*scale,0.14f*scale,
+                                               2.15f*scale,slab.yaw,Color(150,148,142,255));
+                                const LocalRoutePoint front=localRoutePoint(route,anchorDistance,
+                                    feature.routeDistance+bay*static_cast<double>(scale),
+                                    facade+towardTrack*1.07*static_cast<double>(scale));
+                                addOrientedBox(mesh,front.x,slabY+0.52f*scale,front.z,0.05f,
+                                               0.9f*scale,2.15f*scale,front.yaw,style.railing);
+                                addOrientedBox(mesh,front.x,slabY+1.0f*scale,front.z,0.08f,
+                                               0.06f*scale,2.2f*scale,front.yaw,Color(70,74,76,255));
+                                ++counters.staticWorldBlockBalconies_;
+                            }
+                    }
                     LocalRoutePoint apartmentDoor = localRoutePoint(
                         route,anchorDistance,
                         feature.routeDistance+apartmentDoorOffset,facade);
@@ -3799,10 +4327,12 @@ void WorldGeometry::build(const Sim::Route& route,
                 }
                 case World::FeatureKind::Tower:
                 {
-                    const std::array<Color,4> facades = {
-                        Color(133,144,148,255),Color(152,145,137,255),
-                        Color(124,139,145,255),Color(161,156,145,255)};
-                    const Color& facadeColor = facades[feature.variant%facades.size()];
+                    const std::array<Color,6> facades = {
+                        Color(133,144,148,255),Color(176,166,150,255),
+                        Color(196,192,182,255),Color(161,156,145,255),
+                        Color(170,132,112,255),Color(146,160,152,255)};
+                    const Color& facadeColor = facades[treeShapeSeed(
+                        feature.routeDistance,feature.lateralMetres,37U)%facades.size()];
                     const float unscaledBodyHeight = 24.0f
                         + static_cast<float>(feature.variant%4U)*4.2f;
                     const float bodyHeight = unscaledBodyHeight*scale;
@@ -3821,6 +4351,17 @@ void WorldGeometry::build(const Sim::Route& route,
                         - std::copysign(5.80*static_cast<double>(scale),
                                         feature.lateralMetres);
                     const int floors = 8+static_cast<int>(feature.variant%4U);
+                    {
+                        // Spandrel bands every floor on the railway face break the sheer slab.
+                        const LocalRoutePoint band=localRoutePoint(route,anchorDistance,
+                            feature.routeDistance,facade-std::copysign(0.03,feature.lateralMetres));
+                        const Color spandrel(static_cast<int>(facadeColor.getRProperty())*82/100,
+                                             static_cast<int>(facadeColor.getGProperty())*82/100,
+                                             static_cast<int>(facadeColor.getBProperty())*82/100,255);
+                        for (int floor = 0; floor <= floors; ++floor)
+                            addOrientedBox(mesh,band.x,point.y+(5.3f+static_cast<float>(floor)*2.65f)*scale,
+                                           band.z,0.07f,0.32f*scale,14.05f*scale,band.yaw,spandrel);
+                    }
                     for (int floor = 0; floor < floors; ++floor)
                         for (double zOffset : {-4.5,-1.5,1.5,4.5})
                         {
@@ -3900,9 +4441,11 @@ void WorldGeometry::build(const Sim::Route& route,
                 case World::FeatureKind::Warehouse:
                 {
                     const double side = feature.lateralMetres < 0.0 ? -1.0 : 1.0;
+                    // Light profiled cladding: in the cool sky ambient the earlier mid-grey
+                    // tones read as unlit charcoal silhouettes on every shaded face (ENV-132).
                     const std::array<Color,4> industrialWalls = {
-                        Color(133,142,145,255),Color(145,143,132,255),
-                        Color(124,143,141,255),Color(151,148,139,255)};
+                        Color(170,178,180,255),Color(186,180,164,255),
+                        Color(156,176,170,255),Color(194,190,180,255)};
                     const std::array<Color,4> industrialShutters = {
                         Color(82,94,98,255),Color(92,91,84,255),
                         Color(73,96,95,255),Color(91,96,94,255)};
@@ -5278,6 +5821,10 @@ void WorldGeometry::build(const Sim::Route& route,
                     ++counters.staticWorldPlatformWeatheringMarks_;
                 }
             }
+            const auto stationFamily=rural ? StationFacadeFamily::Rural
+                : waterfront ? StationFacadeFamily::Waterfront
+                : station.major ? StationFacadeFamily::Urban : StationFacadeFamily::Suburban;
+            const CanopyPalette canopyColours=canopyPalette(stationFamily,terminal);
             const LocalRoutePoint canopy = localRoutePoint(
                 route, anchorDistance, station.distanceMetres, side * 5.0);
             const float canopyLength = platformCanopyLength(terminal,station.major);
@@ -5305,19 +5852,25 @@ void WorldGeometry::build(const Sim::Route& route,
                 }
             }
             addOrientedBox(mesh, canopy.x,canopy.y+3.6f,canopy.z,
-                           4.6f,0.18f,canopyLength,canopy.yaw,Color(67,91,102,255));
+                           4.6f,0.18f,canopyLength,canopy.yaw,canopyColours.deck);
             addCanopySoffit(mesh,{canopy.x,canopy.y,canopy.z},canopyLength,canopy.yaw,
-                graphicsQuality_>=1 ? &platformMaterial : nullptr);
+                graphicsQuality_>=1 ? &platformMaterial : nullptr,canopyColours);
+            if (canopyColours.valance && graphicsQuality_>=1)
+                for (float eave : {-2.30f,2.30f})
+                    counters.staticWorldCanopyValanceBoards_ += addCanopyValance(mesh,
+                        Matrix::CreateRotationY(canopy.yaw)
+                            *Matrix::CreateTranslation(canopy.x,canopy.y,canopy.z),
+                        canopyLength,eave,canopyColours.fascia);
             for (double edge : {-1.0,1.0})
             {
                 const LocalRoutePoint fascia = localRoutePoint(
                     route,anchorDistance,station.distanceMetres,side*(5.0+edge*2.25));
                 addOrientedBox(mesh,fascia.x,fascia.y+3.52f,fascia.z,
                                0.12f,0.34f,canopyLength+0.16f,fascia.yaw,
-                               Color(48,66,74,255));
+                               canopyColours.fascia);
                 addOrientedBox(mesh,fascia.x,fascia.y+3.36f,fascia.z,
                                0.16f,0.11f,canopyLength+0.20f,fascia.yaw,
-                               Color(54,65,67,255));
+                               canopyColours.fasciaLip);
             }
             // The platform-rear gutter drains through two visible downpipes into the authored
             // rear channel. Short floor-level shoes make the connection legible instead of
@@ -5356,12 +5909,9 @@ void WorldGeometry::build(const Sim::Route& route,
                     route, anchorDistance, station.distanceMetres + offset, side * 5.0);
                 addCanopyFrame(mesh,Matrix::CreateRotationY(support.yaw)
                     *Matrix::CreateTranslation(support.x,support.y,support.z),
-                    -static_cast<float>(side)*0.20f,kPlatformSurfaceElevation);
+                    -static_cast<float>(side)*0.20f,kPlatformSurfaceElevation,canopyColours);
             }
 
-            const auto stationFamily=rural ? StationFacadeFamily::Rural
-                : waterfront ? StationFacadeFamily::Waterfront
-                : station.major ? StationFacadeFamily::Urban : StationFacadeFamily::Suburban;
             const auto stationMaterials=stationMaterialPalette(stationFamily,terminal);
             const double buildingDistance = station.distanceMetres
                 + inward * (terminal ? 42.0 : station.major ? 28.0 : 12.0);
@@ -5930,6 +6480,23 @@ void WorldGeometry::build(const Sim::Route& route,
 
     cacheHits = routePointCache.hits();
     cacheMisses = routePointCache.misses();
+    // GPU footprint of this window: the largest single material bounds one upload and the
+    // graphics-profile buffer limit; the total is what each of the two GPU windows holds.
+    for (std::size_t i=0;i<meshes.size();++i)
+    {
+        const auto& data=meshes[i].data();
+        segments[i]=meshSegments(data);
+        counters.worldGpuSegments_+=static_cast<int>(segments[i].size());
+        const std::size_t bytes=data.vertices.size()*sizeof(LitColorVertex)
+                               +data.indices.size()*sizeof(std::uint32_t);
+        counters.worldGpuBytes_+=bytes;
+        if (bytes>counters.largestMaterialBytes_)
+        {
+            counters.largestMaterialBytes_=bytes;
+            counters.largestMaterial_=static_cast<int>(i);
+        }
+        counters.largestMaterialVertices_=std::max(counters.largestMaterialVertices_,data.vertices.size());
+    }
     generationMs = std::chrono::duration<double,std::milli>(
         std::chrono::steady_clock::now()-generationStart).count();
 }
@@ -6110,6 +6677,8 @@ void SceneRenderer::buildInterior()
     MeshBuilder interiorShadows;
     MeshBuilder interiorLighting;
     MeshBuilder interiorEmitters;
+    // Fixed signage shares the antialiased passenger-display atlas instead of dot-matrix quads.
+    MeshBuilder interiorLettering;
     paSpeakerGrilleCount_ = 0;
     hvacVentCount_ = 0;
     carIdentitySignCount_ = 0;
@@ -6660,10 +7229,10 @@ void SceneRenderer::buildInterior()
                     Vector3{1.04f,0.55f,fixtureZ-0.078f},Color(245,221,184,255));
 
         addEmergencyIntercom(mesh,-1.0f,safetyWallZ);
-        addDisplayText(mesh,"EMERGENCY",1.447f,safetyWallZ-0.0925f,false,
-                       Color(214,224,222,255),-1.0f,0.24f);
-        addDisplayText(mesh,"PRESS AND SPEAK",1.199f,safetyWallZ-0.0925f,false,
-                       Color(214,224,222,255),-1.0f,0.24f);
+        addPrintedPlaqueText(interiorLettering,"EMERGENCY",1.452f,safetyWallZ-0.0925f,false,
+                             Color(214,224,222,255),-1.0f,0.028f,0.22f);
+        addPrintedPlaqueText(interiorLettering,"PRESS AND SPEAK",1.204f,safetyWallZ-0.0925f,false,
+                             Color(214,224,222,255),-1.0f,0.024f,0.22f);
 
         for (float side : {-1.0f,1.0f})
         {
@@ -6879,14 +7448,8 @@ void SceneRenderer::buildInterior()
         {
             const float x0 = side < 0.0f ? -1.50f : 1.42f;
             const float x1 = side < 0.0f ? -1.42f : 1.50f;
-            mesh.addBox(Vector3{x0,0.05f,start}, Vector3{x1,1.15f,end}, trim);
             mesh.addBox(Vector3{x0,2.55f,start}, Vector3{x1,3.0f,end}, shell);
-            const float sideWindowStart = std::min(inner + direction * 1.2f,
-                                                   nose - direction * 1.2f);
-            const float sideWindowEnd = std::max(inner + direction * 1.2f,
-                                                 nose - direction * 1.2f);
-            glass.addBox(Vector3{x0,1.18f,sideWindowStart},
-                         Vector3{x1,2.52f,sideWindowEnd}, Color(67,126,151,42));
+            addCabBodyside(mesh,glass,side,direction,inner,nose,shell,trim);
         }
         const float noseMin = std::min(windscreenZ0, windscreenZ1);
         const float noseMax = std::max(windscreenZ0, windscreenZ1);
@@ -7019,8 +7582,8 @@ void SceneRenderer::buildInterior()
         for (float face : {-1.0f,1.0f})
         {
             const float surface = z + face*0.262f;
-            addDisplayText(mesh,"GANGWAY",2.66f,surface,face < 0.0f,
-                           Color(177,215,215,255));
+            addPrintedPlaqueText(interiorLettering,"GANGWAY",2.67f,surface,face < 0.0f,
+                                 Color(196,226,224,255),0.0f,0.105f,0.70f);
         }
     }
 
@@ -7050,9 +7613,9 @@ void SceneRenderer::buildInterior()
         const float surface = z + (z < 0.0f ? 0.125f : -0.125f);
         mesh.addBox(Vector3{-0.56f,0.77f,surface-0.012f},
                     Vector3{0.56f,1.08f,surface+0.012f}, Color(18,24,27,255));
-        addDisplayText(mesh, "STAFF ONLY", 1.01f,
-                       surface + (z < 0.0f ? 0.014f : -0.014f), mirrored,
-                       Color(248,202,48,255));
+        addPrintedPlaqueText(interiorLettering,"STAFF ONLY",1.02f,
+                             surface + (z < 0.0f ? 0.014f : -0.014f), mirrored,
+                             Color(248,202,48,255),0.0f,0.115f,0.98f);
     }
 
     // Accessible toilet in the fourth car: three walls, sanitary fixtures and a hinged aisle door.
@@ -7147,22 +7710,22 @@ void SceneRenderer::buildInterior()
         Vector3{0.605f,2.607f,6.275f},Color(246,241,218,255));
     mesh.addBox(Vector3{0.42f,1.72f,3.425f}, Vector3{1.38f,2.22f,3.445f},
                 Color(25,74,88,255));
-    addDisplayText(mesh, "ACCESSIBLE", 2.13f, 3.416f, true,
-                   Color(229,240,237,255), 0.90f);
-    addDisplayText(mesh, "WC", 1.91f, 3.416f, true,
-                   Color(247,194,48,255), 0.90f);
+    addPrintedPlaqueText(interiorLettering,"ACCESSIBLE",2.15f,3.416f,true,
+                         Color(229,240,237,255),0.90f,0.085f,0.84f);
+    addPrintedPlaqueText(interiorLettering,"WC",1.98f,3.416f,true,
+                         Color(247,194,48,255),0.90f,0.15f,0.84f);
     mesh.addBox(Vector3{0.42f,1.72f,3.555f}, Vector3{1.38f,2.22f,3.575f},
                 Color(25,74,88,255));
-    addDisplayText(mesh, "ACCESSIBLE", 2.13f, 3.584f, false,
-                   Color(229,240,237,255), 0.90f);
-    addDisplayText(mesh, "WC", 1.91f, 3.584f, false,
-                   Color(247,194,48,255), 0.90f);
+    addPrintedPlaqueText(interiorLettering,"ACCESSIBLE",2.15f,3.584f,false,
+                         Color(229,240,237,255),0.90f,0.085f,0.84f);
+    addPrintedPlaqueText(interiorLettering,"WC",1.98f,3.584f,false,
+                         Color(247,194,48,255),0.90f,0.15f,0.84f);
     mesh.addBox(Vector3{0.42f,1.72f,8.105f}, Vector3{1.38f,2.22f,8.125f},
                 Color(25,74,88,255));
-    addDisplayText(mesh, "ACCESSIBLE", 2.13f, 8.134f, false,
-                   Color(229,240,237,255), 0.90f);
-    addDisplayText(mesh, "WC", 1.91f, 8.134f, false,
-                   Color(247,194,48,255), 0.90f);
+    addPrintedPlaqueText(interiorLettering,"ACCESSIBLE",2.15f,8.134f,false,
+                         Color(229,240,237,255),0.90f,0.085f,0.84f);
+    addPrintedPlaqueText(interiorLettering,"WC",1.98f,8.134f,false,
+                         Color(247,194,48,255),0.90f,0.15f,0.84f);
 
     // Vestibule luggage stacks and grab poles.
     const std::array<float, 6> luggagePositions = {-61.0f, -40.0f, -19.0f, 23.0f, 44.0f, 61.0f};
@@ -7251,6 +7814,7 @@ void SceneRenderer::buildInterior()
     interiorShadows_ = std::make_unique<GpuMesh>(device_,interiorShadows.take());
     interiorLightGradients_ = std::make_unique<GpuMesh>(device_,interiorLighting.take());
     interiorEmitters_ = std::make_unique<GpuMesh>(device_,interiorEmitters.take());
+    interiorLettering_ = std::make_unique<GpuMesh>(device_,interiorLettering.take());
     windowGlass_ = std::make_unique<GpuMesh>(device_, glass.take());
     for (std::size_t side = 0; side < windowReflections_.size(); ++side)
         windowReflections_[side] = std::make_unique<GpuMesh>(
@@ -8292,10 +8856,14 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
         materialEffect_->DirectionalLight0.setSpecularColorProperty(light);
     };
 
-    const double requestedTrackAnchor = std::clamp(
-        std::round(service.routeDistanceMetres / 500.0) * 500.0, 0.0, route.lengthMetres());
-    if (!trackDetail_ || requestedTrackAnchor != trackAnchorDistance_)
-        rebuildTrack(route, requestedTrackAnchor);
+    updateTrack(route,service);
+    stats.trackRebuilds = trackRebuilds_;
+    stats.trackPrefetchHits = trackStreaming_->prefetchHits;
+    stats.trackSynchronousBuilds = trackStreaming_->synchronousBuilds;
+    stats.trackLatePrefetches = trackStreaming_->latePrefetches;
+    stats.trackGenerationMaxMs = trackGenerationMaxMs_;
+    stats.trackRebuildTotalMs = trackRebuildTotalMs_;
+    stats.trackRebuildMaxMs = trackRebuildMaxMs_;
     stats.tracksideKilometrePosts = tracksideKilometrePosts_;
     stats.trackFastenerAssemblies = trackFastenerAssemblies_;
     stats.turnoutPointMotors = trackTurnoutPointMotors_;
@@ -8404,6 +8972,18 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     const auto outdoorLight=exteriorLighting(tunnelLightingMix_);
     effect_->setAmbientLightColorProperty(outdoorLight.ambient);
     effect_->DirectionalLight0.setDiffuseColorProperty(outdoorLight.diffuse);
+    // Shaded facades otherwise take only the cool sky ambient and lose their own hue.
+    for (BasicEffect* exterior : {effect_.get(),materialEffect_.get()})
+    {
+        exterior->DirectionalLight1.setEnabledProperty(true);
+        exterior->DirectionalLight1.setDirectionProperty(groundBounceDirection(daylight));
+        exterior->DirectionalLight1.setDiffuseColorProperty(outdoorLight.bounce);
+        exterior->DirectionalLight1.setSpecularColorProperty(Vector3::Zero);
+        exterior->DirectionalLight2.setEnabledProperty(true);
+        exterior->DirectionalLight2.setDirectionProperty(groundUplightDirection());
+        exterior->DirectionalLight2.setDiffuseColorProperty(outdoorLight.uplight);
+        exterior->DirectionalLight2.setSpecularColorProperty(Vector3::Zero);
+    }
     const Vector3 atmosphericFog=rgb(daylightSkyColor(0))*(1.0f-tunnelLightingMix_)
         +Vector3{0.075f,0.082f,0.090f}*tunnelLightingMix_;
     effect_->setFogColorProperty(atmosphericFog);
@@ -8411,6 +8991,15 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     materialEffect_->DirectionalLight0.setDiffuseColorProperty(outdoorLight.diffuse);
     materialEffect_->setFogColorProperty(atmosphericFog);
 
+    // Recent travel per rendered frame, a decaying maximum so acceleration is seen at once.
+    // Teleports and the first frame do not count as travel.
+    if (lastStreamingDistance_ >= 0.0)
+    {
+        const double travelled = std::abs(service.routeDistanceMetres-lastStreamingDistance_);
+        if (travelled < 100.0)
+            streamingMetresPerFrame_ = std::max(travelled,streamingMetresPerFrame_*0.9);
+    }
+    lastStreamingDistance_ = service.routeDistanceMetres;
     updateStaticWorld(route, world, service);
     stats.worldPrefetchHits = worldStreaming_->prefetchHits;
     stats.worldSynchronousBuilds = worldStreaming_->synchronousBuilds;
@@ -8626,6 +9215,19 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
     stats.terminalShedColumns = worldCounters_.staticWorldTerminalShedColumns_;
     stats.bridgeParapetPosts = worldCounters_.staticWorldBridgeParapetPosts_;
     stats.fencePosts = worldCounters_.staticWorldFencePosts_;
+    stats.cableTroughUnits = worldCounters_.staticWorldCableTroughUnits_;
+    stats.vergeFlowerClumps = worldCounters_.staticWorldVergeFlowerClumps_;
+    stats.palisadePosts = worldCounters_.staticWorldPalisadePosts_;
+    stats.houseOutbuildings = worldCounters_.staticWorldHouseOutbuildings_;
+    stats.blockBalconies = worldCounters_.staticWorldBlockBalconies_;
+    stats.canopyValanceBoards = worldCounters_.staticWorldCanopyValanceBoards_;
+    stats.tramlineSegments = worldCounters_.staticWorldTramlineSegments_;
+    stats.worldGpuMegabytes = static_cast<double>(worldCounters_.worldGpuBytes_)/1048576.0;
+    stats.largestWorldMaterialMegabytes = static_cast<double>(worldCounters_.largestMaterialBytes_)/1048576.0;
+    stats.largestWorldMaterialVertices = static_cast<double>(worldCounters_.largestMaterialVertices_);
+    stats.largestWorldMaterial = worldCounters_.largestMaterial_;
+    stats.worldGpuSegments = worldCounters_.worldGpuSegments_;
+    stats.fieldBoundaryTrees = worldCounters_.staticWorldFieldBoundaryTrees_;
     stats.platformSurfaceJoints = worldCounters_.staticWorldPlatformSurfaceJoints_;
     stats.platformCanopyLights = worldCounters_.staticWorldPlatformCanopyLights_;
     stats.platformCanopyDrainageAssemblies =
@@ -9025,6 +9627,7 @@ RenderStats SceneRenderer::draw(const Matrix& view, const Matrix& projection, co
         drawMesh(*interiorEmitters_,trainWorld,view,projection,stats);
         effect_->setLightingEnabledProperty(true);
     }
+    drawPrintedText(interiorLettering_,trainWorld);
     stats.paSpeakerGrilles = paSpeakerGrilleCount_;
     stats.hvacVents = hvacVentCount_;
     stats.carIdentitySigns = carIdentitySignCount_;

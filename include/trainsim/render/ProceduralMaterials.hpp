@@ -2,6 +2,7 @@
 
 #include "Microsoft/Xna/Framework/Color.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -35,6 +36,12 @@ struct ProceduralImage
 // Absolute route coordinates keep broad urban verge colour continuous across streamed chunks.
 [[nodiscard]] Microsoft::Xna::Framework::Color urbanGroundTint(double distance, double lateral);
 [[nodiscard]] Microsoft::Xna::Framework::Color ruralParcelTint(double distance,double lateral);
+// Field parcels follow a nominal 500 m rhythm, shifted per side by whole 50 m terrain cells.
+// Boundary `parcel` starts that parcel; the sign of `side` selects the railway side.
+[[nodiscard]] double ruralParcelBoundary(std::int64_t parcel,double side);
+[[nodiscard]] std::int64_t ruralParcelIndex(double distance,double side);
+// Stubble and ploughed parcels between 26 m and 260 m carry tramlines (ENV-130).
+[[nodiscard]] bool ruralParcelArable(double distance,double lateral);
 [[nodiscard]] Microsoft::Xna::Framework::Color terminalGroundTint(
     double distance,double lateral,double routeLength);
 

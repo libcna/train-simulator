@@ -304,8 +304,76 @@ inline float canopyShadeAt(const CanopyShadowBounds& bounds,float x,float z)
     return std::clamp(inside/0.25f,0.0f,1.0f);
 }
 
+// Canopy identity per station family (ENV-131): roof deck, fascia bands, steelwork and soffit
+// panels. Suburban keeps the original teal-grey scheme; the terminus has its own train shed.
+struct CanopyPalette
+{
+    Microsoft::Xna::Framework::Color deck{67,91,102,255},fascia{48,66,74,255},fasciaLip{54,65,67,255};
+    Microsoft::Xna::Framework::Color steel{113,128,130,255},foot{96,108,109,255};
+    Microsoft::Xna::Framework::Color soffit{208,211,205,255},soffitAccent{201,205,198,255};
+    Microsoft::Xna::Framework::Color rail{116,129,131,255};
+    bool valance=false;   // Timber dagger-board valance along both eaves.
+};
+
+inline CanopyPalette canopyPalette(StationFacadeFamily family,bool terminal)
+{
+    using Microsoft::Xna::Framework::Color;
+    CanopyPalette palette;
+    if (terminal) return palette;
+    switch (family)
+    {
+    case StationFacadeFamily::Rural:
+        palette.deck=Color(52,82,62,255); palette.fascia=Color(214,206,178,255);
+        palette.fasciaLip=Color(46,74,56,255); palette.steel=Color(58,96,72,255);
+        palette.foot=Color(48,80,60,255); palette.soffit=Color(222,216,196,255);
+        palette.soffitAccent=Color(214,206,186,255); palette.rail=Color(58,96,72,255);
+        palette.valance=true;
+        break;
+    case StationFacadeFamily::Waterfront:
+        palette.deck=Color(70,104,132,255); palette.fascia=Color(58,98,132,255);
+        palette.fasciaLip=Color(214,220,222,255); palette.steel=Color(206,212,212,255);
+        palette.foot=Color(170,178,180,255); palette.soffit=Color(226,230,230,255);
+        palette.soffitAccent=Color(214,222,224,255); palette.rail=Color(196,204,206,255);
+        break;
+    case StationFacadeFamily::Urban:
+        palette.deck=Color(60,62,66,255); palette.fascia=Color(118,54,48,255);
+        palette.fasciaLip=Color(62,64,68,255); palette.steel=Color(74,78,84,255);
+        palette.foot=Color(62,66,70,255); palette.soffit=Color(196,198,196,255);
+        palette.soffitAccent=Color(184,188,188,255); palette.rail=Color(74,78,84,255);
+        break;
+    case StationFacadeFamily::Suburban:
+        break;
+    }
+    return palette;
+}
+
+// Timber valance boards with pointed ends hang below one eave in canopy-local X/Z (the soffit
+// frame). Double-sided flat boards keep it to four triangles each.
+inline int addCanopyValance(MeshBuilder& mesh,const Microsoft::Xna::Framework::Matrix& transform,
+    float length,float eaveX,const Microsoft::Xna::Framework::Color& colour)
+{
+    using namespace Microsoft::Xna::Framework;
+    const int boards=std::clamp(static_cast<int>(std::floor(length/0.19f)),1,1024);
+    const float pitch=length/static_cast<float>(boards);
+    const Color shade(static_cast<int>(colour.getRProperty())*86/100,
+                      static_cast<int>(colour.getGProperty())*86/100,
+                      static_cast<int>(colour.getBProperty())*86/100,255);
+    for (int board=0;board<boards;++board)
+    {
+        const float z=-length*0.5f+(static_cast<float>(board)+0.5f)*pitch;
+        const auto p=[&](float y,float dz) { return Vector3::Transform(Vector3{eaveX,y,z+dz},transform); };
+        const Vector3 a=p(3.31f,-0.075f),b=p(3.31f,0.075f),c=p(3.10f,0.075f),d=p(3.10f,-0.075f),tip=p(3.0f,0);
+        mesh.addQuad(a,b,c,d,colour);
+        mesh.addQuad(d,c,b,a,shade);
+        mesh.addTriangle(d,c,tip,colour);
+        mesh.addTriangle(tip,c,d,shade);
+    }
+    return boards;
+}
+
 inline void addCanopySoffit(MeshBuilder& mesh,
-    const Microsoft::Xna::Framework::Vector3& base,float length,float yaw,MeshBuilder* finish=nullptr)
+    const Microsoft::Xna::Framework::Vector3& base,float length,float yaw,MeshBuilder* finish=nullptr,
+    const CanopyPalette& palette={})
 {
     using namespace Microsoft::Xna::Framework;
     if (length <= 0) return;
@@ -320,7 +388,7 @@ inline void addCanopySoffit(MeshBuilder& mesh,
         {
             const float x0=-2.19f+static_cast<float>(strip)*0.73f+0.007f;
             const float x1=x0+0.716f;
-            const Color colour=(panel+strip)%5==0 ? Color(201,205,198,255) : Color(208,211,205,255);
+            const Color colour=(panel+strip)%5==0 ? palette.soffitAccent : palette.soffit;
             const auto a=Vector3::Transform({x0,3.487f,z0},transform);
             const auto b=Vector3::Transform({x1,3.487f,z0},transform);
             const auto c=Vector3::Transform({x1,3.487f,z1},transform);
@@ -334,7 +402,7 @@ inline void addCanopySoffit(MeshBuilder& mesh,
     // Slim longitudinal support rails leave the central luminaire strip unobstructed.
     for (float x : {-1.65f,1.65f})
         mesh.addBox({x-0.045f,3.37f,-length*0.5f},{x+0.045f,3.48f,length*0.5f},
-                    Color(116,129,131,255),transform);
+                    palette.rail,transform);
 }
 
 // 600 mm staggered paving with 6 mm joints and small, closed bevels. The existing
@@ -594,10 +662,11 @@ inline void addCanopyLuminaire(MeshBuilder& housing,MeshBuilder& emitter,
 }
 
 inline void addCanopyFrame(MeshBuilder& mesh,
-    const Microsoft::Xna::Framework::Matrix& placement,float postX,float platformHeight)
+    const Microsoft::Xna::Framework::Matrix& placement,float postX,float platformHeight,
+    const CanopyPalette& palette={})
 {
     using namespace Microsoft::Xna::Framework;
-    const Color steel(113,128,130,255),foot(96,108,109,255),bolt(159,164,158,255);
+    const Color steel=palette.steel,foot=palette.foot,bolt(159,164,158,255);
     // I-section beam across the roof, seated on a short head plate and hollow steel column.
     mesh.addBox({-2.19f,3.23f,-0.022f},{2.19f,3.42f,0.022f},steel,placement);
     mesh.addBox({-2.21f,3.20f,-0.11f},{2.21f,3.235f,0.11f},steel,placement);

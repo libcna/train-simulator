@@ -26,6 +26,7 @@
 #include "trainsim/render/MeshBuilder.hpp"
 #include "trainsim/render/VegetationGeometry.hpp"
 #include "trainsim/render/TerrainPatchGeometry.hpp"
+#include "trainsim/render/VergeGeometry.hpp"
 #include "trainsim/render/LandscapeVariation.hpp"
 #include "trainsim/render/ViewCulling.hpp"
 #include "trainsim/render/InteriorGeometry.hpp"
@@ -2937,6 +2938,34 @@ TEST_CASE("exterior daylight separates skylight from sun without clipping the li
     REQUIRE((TrainSim::Render::exteriorLighting(2).diffuse-tunnel.diffuse).LengthSquared()==0);
 }
 
+TEST_CASE("ground bounce fills only faces turned away from the sun")
+{
+    using namespace TrainSim::Render;
+    const auto day=exteriorLighting(0);
+    REQUIRE(day.bounce.X>day.bounce.Z);
+    REQUIRE(exteriorLighting(1).bounce.LengthSquared()==0);
+    for (double heading : {0.0,0.9,2.4,-1.7})
+    {
+        const Vector3 sun=daylightDirection(heading);
+        const Vector3 bounce=groundBounceDirection(sun);
+        // Terrain, roofs and every up-facing surface receive none of the fill.
+        REQUIRE(Vector3::Dot(Vector3{0,1,0},-bounce)<0);
+        const Vector3 away=Vector3::Normalize({sun.X,0,sun.Z});
+        // A wall facing away from the sun is filled; a sun-facing wall is not.
+        REQUIRE(Vector3::Dot(away,-bounce)>0.85f);
+        REQUIRE(Vector3::Dot(-away,-bounce)<0);
+        const float shaded=(day.ambient+day.bounce*Vector3::Dot(away,-bounce)).Length();
+        const float lit=(day.ambient+day.diffuse*Vector3::Dot(-away,-sun)).Length();
+        REQUIRE(shaded<lit);
+    }
+    // The uplight reaches canopy soffits but no wall or up-facing surface.
+    REQUIRE(Vector3::Dot(Vector3{0,-1,0},-groundUplightDirection())>0.99f);
+    REQUIRE(Vector3::Dot(Vector3{0,1,0},-groundUplightDirection())<0);
+    REQUIRE(std::abs(Vector3::Dot(Vector3{1,0,0},-groundUplightDirection()))<1e-6f);
+    REQUIRE(day.uplight.X>day.uplight.Z);
+    REQUIRE(exteriorLighting(1).uplight.LengthSquared()==0);
+}
+
 TEST_CASE("cabin avatar lighting fades sunlight into overhead fill in tunnels")
 {
     const auto day = TrainSim::Render::daylightDirection(0.3);
@@ -4004,5 +4033,453 @@ TEST_CASE("worker world snapshots match retained chunks and clear old material g
             }
         }
         REQUIRE(scratch->counters==foreground.counters);
+        REQUIRE(scratch->segments==foreground.segments);
     }
+}
+
+TEST_CASE("verge tint varies by zone and joins the field headland exactly")
+{
+    using namespace TrainSim::Render;
+    for (double side : {-1.0,1.0})
+    {
+        // The headland edge is the field margin colour used beyond 26 m.
+        REQUIRE(ruralVergeTint(1234.5,side*26.0)==Microsoft::Xna::Framework::Color(91,133,72,255));
+        // The cess is greyer (less green dominance) than the mown verge beside it.
+        int cessGreen=0,mownGreen=0,cessRed=0,mownRed=0;
+        for (int i=0;i<200;++i)
+        {
+            const double distance=50'000.0+i*3.7;
+            const auto cess=ruralVergeTint(distance,side*3.4);
+            const auto mown=ruralVergeTint(distance,side*6.0);
+            cessGreen+=cess.getGProperty()-cess.getRProperty();
+            mownGreen+=mown.getGProperty()-mown.getRProperty();
+            cessRed+=cess.getRProperty();
+            mownRed+=mown.getRProperty();
+        }
+        REQUIRE(cessGreen<mownGreen);
+        REQUIRE(cessRed>mownRed);
+        // Along the route the mown verge changes colour instead of repeating one flat tone.
+        int minimum=255,maximum=0;
+        for (int i=0;i<400;++i)
+        {
+            const int g=ruralVergeTint(80'000.0+i*2.5,side*6.0).getGProperty();
+            minimum=std::min(minimum,g);
+            maximum=std::max(maximum,g);
+        }
+        REQUIRE(maximum-minimum>=8);
+        // Value noise is continuous: nearby samples differ only slightly.
+        for (double across : {3.5,5.0,6.8,8.0,10.0,15.0,24.0})
+        {
+            const auto a=ruralVergeTint(7'000.0,side*across);
+            const auto b=ruralVergeTint(7'000.05,side*(across+0.01));
+            REQUIRE(std::abs(a.getGProperty()-b.getGProperty())<=3);
+        }
+    }
+}
+
+TEST_CASE("grid terrain cells keep the source surface and cover it once")
+{
+    using namespace TrainSim::Render;
+    using Microsoft::Xna::Framework::Vector3;
+    // A deliberately non-planar cell: corner c is raised.
+    const std::array<Vector3,4> corners={Vector3{0,0,0},Vector3{0,0,50},Vector3{17.6f,3,50},
+                                         Vector3{17.6f,0,0}};
+    const std::array<float,6> u={0,0.2f,0.4f,0.6f,0.8f,1};
+    const std::array<float,5> v={0,0.13f,0.5f,0.91f,1};
+    MeshBuilder mesh;
+    addGridTerrainCell(mesh,corners,std::span<const float>{u},std::span<const float>{v},
+        [](float,float) { return Microsoft::Xna::Framework::Color(90,120,60,255); },
+        [](float a,float b) { return Microsoft::Xna::Framework::Vector2{a,b}; });
+    // Every vertex lies on one of the two source triangles (a,b,c) or (a,c,d).
+    const auto onSurface=[&](const Vector3& p) {
+        const float uu=p.Z/50.0f,vv=p.X/17.6f;
+        const auto q=uu>=vv ? corners[0]*(1-uu)+corners[1]*(uu-vv)+corners[2]*vv
+                            : corners[0]*(1-vv)+corners[2]*uu+corners[3]*(vv-uu);
+        return std::abs(q.Y-p.Y)<1e-3f;
+    };
+    float area=0;
+    const auto& data=mesh.data();
+    for (const auto& vertex : data.vertices) REQUIRE(onSurface(vertex.position));
+    for (std::size_t i=0;i+2<data.indices.size();i+=3)
+    {
+        const auto& a=data.vertices[data.indices[i]].position;
+        const auto& b=data.vertices[data.indices[i+1]].position;
+        const auto& c=data.vertices[data.indices[i+2]].position;
+        // Clipped triangles keep the quad winding; centroids stay on the source surface.
+        REQUIRE(Vector3::Cross(b-a,c-a).Y*Vector3::Cross(
+            data.vertices[data.indices[1]].position-data.vertices[data.indices[0]].position,
+            data.vertices[data.indices[2]].position-data.vertices[data.indices[0]].position).Y>0);
+        REQUIRE(onSurface((a+b+c)*(1.0f/3.0f)));
+        area+=0.5f*std::abs((b.X-a.X)*(c.Z-a.Z)-(c.X-a.X)*(b.Z-a.Z));
+    }
+    REQUIRE(std::abs(area-17.6f*50.0f)<0.5f);
+}
+
+TEST_CASE("verge flowers stay on the inner fence line in deterministic drifts")
+{
+    using namespace TrainSim::Render;
+    int flowering=0,total=0;
+    for (int side : {-1,1})
+        for (double distance=10'000.0;distance<12'000.0;distance+=2.0)
+        {
+            const auto a=vergeFlowerPlacement(distance,side);
+            const auto b=vergeFlowerPlacement(distance,side);
+            REQUIRE(a.distance==b.distance);
+            REQUIRE(a.lateral*side>=7.55);
+            REQUIRE(a.lateral*side<=kFenceLateral-0.1);
+            REQUIRE(std::abs(a.distance-distance)<=0.76);
+            REQUIRE(a.height>0.35f);
+            REQUIRE(a.height<0.69f);
+            ++total;
+            if (a.flowering) ++flowering;
+        }
+    // Drifts: neither every clump nor none of them flowers.
+    REQUIRE(flowering>total/8);
+    REQUIRE(flowering<total*7/8);
+    MeshBuilder clump;
+    auto placement=vergeFlowerPlacement(10'004.0,1);
+    placement.flowering=true;
+    addVergeFlowerClump(clump,{0,0,0},placement);
+    float top=0;
+    for (const auto& vertex : clump.data().vertices) top=std::max(top,vertex.position.Y);
+    REQUIRE(top>=placement.height*1.0f);
+    REQUIRE(top<0.8f);
+}
+
+TEST_CASE("cable trough units sit low behind the masts and field boundaries vary")
+{
+    using namespace TrainSim::Render;
+    REQUIRE(kCableTroughLateral>4.3f+0.45f);
+    REQUIRE(kCableTroughLateral+0.17f<6.75f);
+    MeshBuilder trough;
+    addCableTroughUnit(trough,Microsoft::Xna::Framework::Matrix::getIdentityProperty(),3);
+    for (const auto& vertex : trough.data().vertices)
+    {
+        REQUIRE(vertex.position.Y<=0.12f);
+        REQUIRE(std::abs(vertex.position.Z)<=kCableTroughUnitLength*0.5);
+    }
+    std::array<int,4> kinds{};
+    for (std::int64_t parcel=0;parcel<400;++parcel)
+        for (int side : {-1,1})
+        {
+            const auto layout=fieldBoundaryLayout(parcel,side);
+            ++kinds[static_cast<std::size_t>(layout.kind)];
+            REQUIRE(layout.outerLateral>=96.0f);
+            REQUIRE(layout.outerLateral<=180.0f);
+            REQUIRE(layout.gateLateral>=24.0f);
+            REQUIRE(layout.gateLateral<=layout.outerLateral-24.0f);
+            REQUIRE(layout.height>=0.8f);
+            REQUIRE(layout.height<=1.35f);
+        }
+    for (int count : kinds) REQUIRE(count>60);
+}
+
+TEST_CASE("urban verge joins the street ground and the palisade stays see-through")
+{
+    using namespace TrainSim::Render;
+    constexpr double length=286'400;
+    for (double side : {-1.0,1.0})
+    {
+        REQUIRE(urbanVergeTint(2'000,side*kUrbanVergeEnd,length)
+            ==terminalGroundTint(2'000,side*kUrbanVergeEnd,length));
+        // The cess is gravel, not grass: red is not dominated by green near the ballast.
+        const auto cess=urbanVergeTint(2'000,side*3.5,length);
+        REQUIRE(cess.getRProperty()+8>=cess.getGProperty());
+    }
+    REQUIRE(kPalisadeLateral<14.8-0.3);   // Inside the near street kerb.
+    REQUIRE(kPalisadeLateral>8.36+1.0);   // Clear of the parallel track's ballast toe.
+    const auto straight=[](double distance,double lateral) {
+        struct P { float x,y,z,yaw; };
+        return P{static_cast<float>(lateral),0.0f,static_cast<float>(distance),0.0f};
+    };
+    MeshBuilder posts,span;
+    addPalisadePost(posts,straight,10.0,kPalisadeLateral);
+    addPalisadeSpan(span,straight,10.0,10.0+kPalisadePostSpacing,kPalisadeLateral,true);
+    float top=0;
+    for (const auto& vertex : span.data().vertices)
+    {
+        top=std::max(top,vertex.position.Y);
+        REQUIRE(vertex.position.Z>=9.99f);
+        REQUIRE(vertex.position.Z<=10.0f+static_cast<float>(kPalisadePostSpacing)+0.01f);
+    }
+    REQUIRE(top>2.0f);
+    REQUIRE(top<2.1f);
+    // Pales are 60 mm blades every 250 mm: most of the run stays open.
+    REQUIRE(span.data().vertices.size()>40);
+}
+
+TEST_CASE("house styles vary palette storeys roofs and keep the footprint")
+{
+    using namespace TrainSim::Render;
+    std::vector<unsigned> facades,roofs;
+    int bungalows=0,porches=0,barns=0;
+    std::array<int,4> chimneys{};
+    for (std::uint32_t i=0;i<400;++i)
+    {
+        const auto style=houseStyle(treeShapeSeed(1'000.0+i*37.0,60.0,29U));
+        const auto facade=style.facade.getPackedValueProperty();
+        const auto roof=style.roof.getPackedValueProperty();
+        if (std::find(facades.begin(),facades.end(),facade)==facades.end()) facades.push_back(facade);
+        if (std::find(roofs.begin(),roofs.end(),roof)==roofs.end()) roofs.push_back(roof);
+        if (style.bungalow) ++bungalows;
+        if (style.porch) ++porches;
+        if (style.barn) ++barns;
+        ++chimneys[static_cast<std::size_t>(style.chimneys)];
+        REQUIRE(style.doorBay>=-1);
+        REQUIRE(style.doorBay<=1);
+        const auto envelope=houseEnvelope(1.0f,style);
+        REQUIRE(envelope.width==7.0f);
+        REQUIRE(envelope.length==10.0f);
+        REQUIRE(envelope.roofHeight>envelope.wallHeight+1.5f);
+        REQUIRE(envelope.roofHeight<9.0f);
+    }
+    REQUIRE(facades.size()==7);
+    REQUIRE(roofs.size()==5);
+    REQUIRE(bungalows>40);
+    REQUIRE(bungalows<140);
+    REQUIRE(porches>80);
+    REQUIRE(barns>120);
+    for (int count : chimneys) REQUIRE(count>50);
+    // Outbuildings stay inside their own reserved parcel beside the house.
+    for (bool barn : {false,true})
+    {
+        MeshBuilder walls;
+        addRuralOutbuilding(walls,walls,Microsoft::Xna::Framework::Matrix::getIdentityProperty(),1.0f,
+                            barn,Color(200,190,170,255),Color(120,60,50,255));
+        for (const auto& vertex : walls.data().vertices)
+        {
+            REQUIRE(std::abs(vertex.position.X)<=TrainSim::World::kHouseOutbuildingHalfWidth+0.3);
+            REQUIRE(std::abs(vertex.position.Z)<=TrainSim::World::kHouseOutbuildingHalfLength+0.3);
+            REQUIRE(vertex.position.Y<6.2f);
+        }
+    }
+    REQUIRE(TrainSim::World::kHouseOutbuildingOffset-TrainSim::World::kHouseOutbuildingHalfLength>6.2);
+    REQUIRE(TrainSim::World::houseHasOutbuilding(4U,0.1));
+    REQUIRE(!TrainSim::World::houseHasOutbuilding(4U,0.5));
+    REQUIRE(!TrainSim::World::houseHasOutbuilding(3U,0.1));
+}
+
+TEST_CASE("urban blocks draw palettes and balconies from a stable seed")
+{
+    using namespace TrainSim::Render;
+    std::vector<unsigned> facades;
+    std::array<int,4> patterns{};
+    for (std::uint32_t i=0;i<400;++i)
+    {
+        const auto style=blockStyle(treeShapeSeed(2'000.0+i*41.0,-70.0,31U));
+        const auto facade=style.facade.getPackedValueProperty();
+        if (std::find(facades.begin(),facades.end(),facade)==facades.end()) facades.push_back(facade);
+        ++patterns[static_cast<std::size_t>(style.balconyPattern)];
+        REQUIRE(blockStyle(treeShapeSeed(2'000.0+i*41.0,-70.0,31U)).facade==style.facade);
+    }
+    REQUIRE(facades.size()==8);
+    for (int count : patterns) REQUIRE(count>50);
+    REQUIRE(!blockBayHasBalcony(0,1.4));
+    REQUIRE(blockBayHasBalcony(1,1.4));
+    REQUIRE(!blockBayHasBalcony(1,4.2));
+    REQUIRE(blockBayHasBalcony(2,-4.2));
+    REQUIRE(blockBayHasBalcony(3,-1.4));
+}
+
+TEST_CASE("station families have distinct canopies and rural valances clear the platform")
+{
+    using namespace TrainSim::Render;
+    std::vector<unsigned> decks;
+    for (auto family : {StationFacadeFamily::Rural,StationFacadeFamily::Urban,
+                        StationFacadeFamily::Waterfront,StationFacadeFamily::Suburban})
+    {
+        const auto deck=canopyPalette(family,false).deck.getPackedValueProperty();
+        if (std::find(decks.begin(),decks.end(),deck)==decks.end()) decks.push_back(deck);
+        REQUIRE(canopyPalette(family,false).valance==(family==StationFacadeFamily::Rural));
+    }
+    REQUIRE(decks.size()==4);
+    // The terminus and suburban stops keep the original scheme.
+    REQUIRE(canopyPalette(StationFacadeFamily::Rural,true).deck==CanopyPalette{}.deck);
+    MeshBuilder valance;
+    const int boards=addCanopyValance(valance,Microsoft::Xna::Framework::Matrix::getIdentityProperty(),
+                                      30.0f,2.30f,Color(214,206,178,255));
+    REQUIRE(boards>=150);
+    for (const auto& vertex : valance.data().vertices)
+    {
+        // Lowest point stays about 2.2 m above the 0.78 m platform surface.
+        REQUIRE(vertex.position.Y>=2.99f);
+        REQUIRE(vertex.position.Y<=3.32f);
+        REQUIRE(std::abs(vertex.position.Z)<=15.0f);
+    }
+    MeshBuilder soffit;
+    addCanopySoffit(soffit,Vector3::Zero,12.0f,0.0f,nullptr,canopyPalette(StationFacadeFamily::Rural,false));
+    bool rural=false;
+    for (const auto& vertex : soffit.data().vertices)
+        rural=rural || vertex.color==canopyPalette(StationFacadeFamily::Rural,false).soffit.getPackedValueProperty();
+    REQUIRE(rural);
+}
+
+TEST_CASE("driving cab sides are solid with one door window and bogie per side")
+{
+    using namespace TrainSim::Render;
+    for (const float direction : {-1.0f,1.0f})
+        for (const float side : {-1.0f,1.0f})
+        {
+            const float inner=direction*63.3f,nose=direction*72.8f;
+            MeshBuilder mesh,glass;
+            addCabBodyside(mesh,glass,side,direction,inner,nose,Color(206,212,212,255),
+                           Color(32,102,121,255));
+            // Glazing covers only the door drop-light and the side window near the nose.
+            float glassArea=0;
+            for (std::size_t i=0;i+3<glass.data().vertices.size();i+=24)
+            {
+                float y0=1e9f,y1=-1e9f,z0=1e9f,z1=-1e9f;
+                for (std::size_t k=i;k<i+24 && k<glass.data().vertices.size();++k)
+                {
+                    const auto& p=glass.data().vertices[k].position;
+                    y0=std::min(y0,p.Y); y1=std::max(y1,p.Y);
+                    z0=std::min(z0,p.Z); z1=std::max(z1,p.Z);
+                    REQUIRE((p.Z-nose)*direction<=0.01f);
+                    REQUIRE((p.Z-nose)*direction>=-kCabDoorFromNose-0.01f);
+                }
+                glassArea+=(y1-y0)*(z1-z0);
+            }
+            REQUIRE(glassArea>1.5f);
+            REQUIRE(glassArea<3.5f);   // The former pane was 7.1 m x 1.34 m = 9.5 m2.
+            // The bodyside stays within the shell envelope and below the cantrail.
+            int wheelVertices=0;
+            for (const auto& vertex : mesh.data().vertices)
+            {
+                REQUIRE(std::abs(vertex.position.X)<=1.57f);
+                REQUIRE(vertex.position.Y<=2.56f);
+                REQUIRE((vertex.position.Z-std::min(inner,nose))>=-0.05f);
+                REQUIRE((vertex.position.Z-std::max(inner,nose))<=0.05f);
+                if (vertex.position.Y<0.38f && std::abs(vertex.position.X)>1.0f
+                    && std::abs(vertex.position.X)<1.17f) ++wheelVertices;
+            }
+            REQUIRE(wheelVertices>0);
+        }
+}
+
+TEST_CASE("printed plaque text is centred bounded and readable from its face")
+{
+    using namespace TrainSim::Render;
+    for (bool mirrored : {false,true})
+    {
+        MeshBuilder text;
+        addPrintedPlaqueText(text,"GANGWAY",2.67f,0.25f,mirrored,Color(196,226,224,255),0.3f,0.105f,0.70f);
+        REQUIRE(!text.data().vertices.empty());
+        float left=1e9f,right=-1e9f,top=-1e9f,bottom=1e9f;
+        for (const auto& vertex : text.data().vertices)
+        {
+            left=std::min(left,vertex.position.X); right=std::max(right,vertex.position.X);
+            top=std::max(top,vertex.position.Y); bottom=std::min(bottom,vertex.position.Y);
+            REQUIRE(vertex.position.Z==0.25f);
+        }
+        REQUIRE(right-left<=0.70f);
+        REQUIRE(std::abs((left+right)*0.5f-0.3f)<0.03f);
+        REQUIRE(top<=2.671f);
+        REQUIRE(2.67f-bottom<=0.13f);
+        REQUIRE(2.67f-bottom>=0.09f);
+        // Mirrored text faces the other way: its first triangle winds oppositely.
+        const auto& v=text.data().vertices;
+        const auto& i=text.data().indices;
+        const float facing=Vector3::Cross(v[i[1]].position-v[i[0]].position,
+                                          v[i[2]].position-v[i[0]].position).Z;
+        REQUIRE((facing>0)==mirrored);
+    }
+}
+
+TEST_CASE("mesh segments stay below the buffer budget and cover every triangle once")
+{
+    using namespace TrainSim::Render;
+    MeshBuilder small;
+    small.addBox({0,0,0},{1,1,1},Color(1,2,3,255));
+    const auto whole=meshSegments(small.data());
+    REQUIRE(whole.size()==1);
+    REQUIRE((whole[0]==MeshSegment{0,small.data().vertices.size(),0,small.data().indices.size()}));
+    REQUIRE(meshSegments(MeshData{}).empty());
+
+    MeshBuilder large;
+    for (int i=0;i<500;++i)
+    {
+        const float x=static_cast<float>(i);
+        large.addBox({x,0,0},{x+0.5f,1,1},Color(1,2,3,255));
+        large.addTriangle({x,2,0},{x+1,2,0},{x,3,0},Color(4,5,6,255));
+    }
+    constexpr std::size_t budget=100;
+    const auto segments=meshSegments(large.data(),budget);
+    REQUIRE(segments.size()>=large.data().vertices.size()/budget);
+    std::size_t nextIndex=0;
+    for (const auto& segment : segments)
+    {
+        REQUIRE(segment.vertexCount<=budget);
+        REQUIRE(segment.firstIndex==nextIndex);
+        REQUIRE(segment.indexCount%3==0);
+        for (std::size_t i=segment.firstIndex;i<segment.firstIndex+segment.indexCount;++i)
+        {
+            const std::size_t index=large.data().indices[i];
+            REQUIRE(index>=segment.firstVertex);
+            REQUIRE(index<segment.firstVertex+segment.vertexCount);
+        }
+        nextIndex+=segment.indexCount;
+    }
+    REQUIRE(nextIndex==large.data().indices.size());
+    // The production budget keeps one segment's vertices well under the 64 MiB profile limit.
+    REQUIRE(kMaxMeshSegmentVertices*sizeof(LitColorVertex)<std::size_t{67'108'863});
+    MeshData bad;
+    bad.vertices.resize(400);
+    bad.indices={0,1,399};
+    bool rejected=false;
+    try { (void)meshSegments(bad,100); }
+    catch (const std::logic_error&) { rejected=true; }
+    REQUIRE(rejected);
+}
+
+TEST_CASE("worker track batches match foreground builds and reuse their builders")
+{
+    using namespace TrainSim;
+    const auto route = Sim::Route::NorthernValleyExpress();
+    Render::TrackGeometry foreground;
+    auto scratch = std::make_unique<Render::TrackGeometry>();
+    // Countryside, a station throat with turnouts, both route ends and a quality change.
+    for (const auto& [anchor,quality] : std::array<std::pair<double,int>,5>{
+            {{52000,2},{63000,2},{0,2},{286400,1},{192500,0}}})
+    {
+        auto worker=std::async(std::launch::async,
+            [copy=route,geometry=std::move(scratch),anchor,quality]() mutable {
+                geometry->build(copy,anchor,quality);
+                return std::move(geometry);
+            });
+        foreground.build(route,anchor,quality);
+        scratch=worker.get();
+        REQUIRE(scratch->anchor==anchor);
+        REQUIRE(scratch->quality==quality);
+        REQUIRE(scratch->kilometrePosts==foreground.kilometrePosts);
+        REQUIRE(scratch->fastenerAssemblies==foreground.fastenerAssemblies);
+        REQUIRE(scratch->turnoutPointMotors==foreground.turnoutPointMotors);
+        REQUIRE(scratch->segments==foreground.segments);
+        for (std::size_t material=0; material<Render::kTrackMaterialCount; ++material)
+        {
+            const auto& actual=scratch->materials()[material]->data();
+            const auto& expected=foreground.materials()[material]->data();
+            REQUIRE(!expected.empty());
+            REQUIRE(actual.indices==expected.indices);
+            REQUIRE(actual.vertices.size()==expected.vertices.size());
+            for (std::size_t i=0; i<actual.vertices.size(); i+=97)
+                REQUIRE(actual.vertices[i].position==expected.vertices[i].position);
+            for (const auto& segment : scratch->segments[material])
+                REQUIRE(segment.vertexCount<=Render::kMaxMeshSegmentVertices);
+        }
+    }
+}
+
+TEST_CASE("staged upload urgency spreads the remainder over the frames before a boundary")
+{
+    using TrainSim::Render::stagedUploadBytesPerFrame;
+    REQUIRE(stagedUploadBytesPerFrame(0,100.0,1.0)==0);
+    // 102 frames away, two frames of margin: one hundredth per frame.
+    REQUIRE(stagedUploadBytesPerFrame(100'000,102.0,1.0)==1'000);
+    // Faster travel leaves fewer frames, so each frame must carry more.
+    REQUIRE(stagedUploadBytesPerFrame(100'000,102.0,4.0)>stagedUploadBytesPerFrame(100'000,102.0,1.0));
+    // At or past the boundary, everything that remains is due now; direction does not matter.
+    REQUIRE(stagedUploadBytesPerFrame(100'000,1.0,5.0)==100'000);
+    REQUIRE(stagedUploadBytesPerFrame(100'000,-102.0,1.0)==1'000);
+    // A stationary train has no deadline pressure beyond the minimum.
+    REQUIRE(stagedUploadBytesPerFrame(100'000,50.0,0.0)<=3);
 }

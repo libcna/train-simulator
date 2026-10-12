@@ -26,7 +26,25 @@ struct ExteriorLighting
 {
     Microsoft::Xna::Framework::Vector3 ambient;
     Microsoft::Xna::Framework::Vector3 diffuse;
+    // Warm light reflected from sunlit ground onto faces turned away from the sun.
+    Microsoft::Xna::Framework::Vector3 bounce;
+    // Light reflected straight up from paving and grass onto soffits and other undersides.
+    Microsoft::Xna::Framework::Vector3 uplight;
 };
+
+// Rays of the reflected uplight travel vertically upward, so only down-facing surfaces see it.
+inline Microsoft::Xna::Framework::Vector3 groundUplightDirection()
+{
+    return {0.0f,1.0f,0.0f};
+}
+
+// Ground-bounce fill travels back against the sun's horizontal heading and slightly upward, so
+// shaded walls and soffits receive it while terrain, roofs and every up-facing surface do not.
+inline Microsoft::Xna::Framework::Vector3 groundBounceDirection(
+    const Microsoft::Xna::Framework::Vector3& daylight)
+{
+    return Microsoft::Xna::Framework::Vector3::Normalize({-daylight.X,0.30f,-daylight.Z});
+}
 
 inline ExteriorLighting exteriorLighting(float tunnelMix)
 {
@@ -35,7 +53,9 @@ inline ExteriorLighting exteriorLighting(float tunnelMix)
     // Cool skylight and warmer direct sun retain the old total lit-surface energy, but no
     // longer fill every shaded face with almost the same intensity as a sun-facing surface.
     return {Vector3{0.35f,0.42f,0.52f}*(1-t)+Vector3{0.40f,0.41f,0.43f}*t,
-            Vector3{0.67f,0.59f,0.47f}*(1-t)+Vector3{0.12f,0.12f,0.12f}*t};
+            Vector3{0.67f,0.59f,0.47f}*(1-t)+Vector3{0.12f,0.12f,0.12f}*t,
+            Vector3{0.19f,0.17f,0.13f}*(1-t),
+            Vector3{0.17f,0.16f,0.13f}*(1-t)};
 }
 
 inline AvatarCabinLighting avatarCabinLighting(

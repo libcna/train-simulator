@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <algorithm>
 #include <cmath>
@@ -96,6 +97,49 @@ inline double lakeShoreTerrainOffset(double natural,double waterward,double wate
     value = (value^(value>>30))*0xbf58476d1ce4e5b9ULL;
     value = (value^(value>>27))*0x94d049bb133111ebULL;
     return static_cast<int>((value^(value>>31))%5U);
+}
+
+// Tramlines (ENV-130): paired tractor wheelings every 24 m across an arable parcel, parallel to
+// the railway. Lateral centres of the pairs on one side, inside both parcel bands.
+inline constexpr std::array<double,9> kTramlineLaterals={38,62,86,114,138,162,186,210,234};
+inline constexpr double kTramlineHalfGauge=0.9;   // Wheel-track centres either side of a line.
+inline constexpr double kTramlineWheelWidth=0.45;
+inline constexpr double kTramlineHeadland=6.0;    // Kept clear of each parcel boundary.
+
+// Field boundary at one parcel edge (ENV-128). Hedges, gated hedges, tree lines and open
+// grass margins alternate per side, and each boundary reaches its own outer extent.
+enum class FieldBoundaryKind { Hedge, GatedHedge, TreeLine, Open };
+
+struct FieldBoundaryLayout
+{
+    FieldBoundaryKind kind=FieldBoundaryKind::Hedge;
+    float outerLateral=96;   // Hedge runs from 12 m to this distance from the line.
+    float gateLateral=0;     // Centre of a 5 m field gateway for GatedHedge.
+    float height=0.95f;
+    std::uint32_t seed=0;
+};
+
+[[nodiscard]] inline FieldBoundaryLayout fieldBoundaryLayout(std::int64_t parcel,int side) noexcept
+{
+    std::uint64_t value=static_cast<std::uint64_t>(parcel)*0x9e3779b97f4a7c15ULL
+        ^(side<0 ? 0x3c6ef372fe94f82bULL : 0xa54ff53a5f1d36f1ULL);
+    value=(value^(value>>30))*0xbf58476d1ce4e5b9ULL;
+    value=(value^(value>>27))*0x94d049bb133111ebULL;
+    value^=value>>31;
+    constexpr FieldBoundaryKind kinds[10]={
+        FieldBoundaryKind::Hedge,FieldBoundaryKind::Hedge,FieldBoundaryKind::Hedge,
+        FieldBoundaryKind::Hedge,FieldBoundaryKind::GatedHedge,FieldBoundaryKind::GatedHedge,
+        FieldBoundaryKind::TreeLine,FieldBoundaryKind::TreeLine,FieldBoundaryKind::Open,
+        FieldBoundaryKind::Open};
+    constexpr float extents[4]={96,120,150,180};
+    FieldBoundaryLayout layout;
+    layout.kind=kinds[value%10U];
+    layout.outerLateral=extents[(value>>8)%4U];
+    layout.gateLateral=24.0f+static_cast<float>((value>>16)%1024U)/1023.0f
+        *(layout.outerLateral-48.0f);
+    layout.height=0.80f+static_cast<float>((value>>28)%7U)*0.09f;
+    layout.seed=static_cast<std::uint32_t>(value>>32);
+    return layout;
 }
 
 } // namespace TrainSim::Render

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
@@ -555,6 +556,39 @@ void MeshBuilder::addDiscXZ(const Vector3& centre, float radius, int sides, cons
                          centre.Z + std::sin(a1) * radius};
         addTriangle(centre, p1, p0, color);
     }
+}
+
+std::vector<MeshSegment> meshSegments(const MeshData& data,std::size_t maxVertices)
+{
+    if (data.empty()) return {};
+    if (maxVertices<3) throw std::invalid_argument("A mesh segment must hold at least one triangle");
+    if (data.vertices.size()<=maxVertices)
+        return {MeshSegment{0,data.vertices.size(),0,data.indices.size()}};
+    std::vector<MeshSegment> segments;
+    std::size_t low=0,high=0,firstIndex=0;
+    bool open=false;
+    for (std::size_t i=0;i+2<data.indices.size();i+=3)
+    {
+        const std::size_t a=data.indices[i],b=data.indices[i+1],c=data.indices[i+2];
+        const std::size_t triangleLow=std::min({a,b,c}),triangleHigh=std::max({a,b,c});
+        if (triangleHigh-triangleLow+1>maxVertices)
+            throw std::logic_error("A single triangle spans more vertices than one mesh segment");
+        if (open && std::max(high,triangleHigh)-std::min(low,triangleLow)+1>maxVertices)
+        {
+            segments.push_back({low,high-low+1,firstIndex,i-firstIndex});
+            open=false;
+        }
+        if (!open)
+        {
+            low=triangleLow; high=triangleHigh; firstIndex=i; open=true;
+        }
+        else
+        {
+            low=std::min(low,triangleLow); high=std::max(high,triangleHigh);
+        }
+    }
+    if (open) segments.push_back({low,high-low+1,firstIndex,data.indices.size()-firstIndex});
+    return segments;
 }
 
 } // namespace TrainSim::Render

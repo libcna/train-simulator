@@ -297,6 +297,13 @@ Tests cover colour balance, summed intensity, interpolation, endpoints and clamp
 directional shading, not a shadow map; occlusion and material-specific light transport remain
 approximations.
 
+Two fill lights approximate light reflected from sunlit ground (ENV-129/131). A warm bounce
+(`groundBounceDirection`) travels against the sun's horizontal heading and slightly upward, so
+facades turned away from the sun keep their own hue instead of all turning the cool ambient
+blue-grey; a weaker uplight (`groundUplightDirection`) reaches only down-facing surfaces such as
+canopy soffits. Neither reaches terrain, roofs or any up-facing surface, both fade to zero in
+tunnels, and the OpenGL 3.3 facade shader applies the same terms as the stock effects.
+
 ## Broadleaf foliage material
 
 Medium/High route-feature crowns carry three crossed double-sided leaf-spray cards per lobe
@@ -412,10 +419,14 @@ and station transitions remain in that window; they are not filtered out as outl
 
 Static-world generation is CPU-only `WorldGeometry` output: fourteen material builders plus
 geometry counters. One asynchronous job owns a route copy and a deterministic `StreamingWorld`
-snapshot for the next chunk in the service direction. Its builders retain capacity. The render
-thread polls completion and uploads at most one non-empty material per frame into a second GPU
-window, skipping empty slots without wasting frames; all meshes,
-anchor and counters swap together at the requested boundary. Two GPU windows and one CPU window
+snapshot for the next chunk in the service direction. Its builders retain capacity. Each
+material is split into contiguous segments of at most 262,144 vertices (`meshSegments`), below
+the graphics profile's 64 MiB buffer limit. The render thread polls completion and stages 3 MiB
+slices into a second GPU window within a 4 ms per-frame budget, raised when the boundary is
+near (`stagedUploadBytesPerFrame`); empty slots cost nothing. All meshes,
+anchor and counters swap together at the requested boundary. The 2 km track batch follows the
+same pattern through `TrackGeometry`: a worker prepares the next 500 m anchor, the render thread
+stages its three meshes and swaps them at the switch point (PERF-002). Two GPU windows and one CPU window
 bound residency independently of journey duration. No worker accesses CNA graphics resources,
 avatar state or live simulation data. Renderer destruction joins the independently owned job.
 
@@ -575,6 +586,14 @@ runtime diagnostic exposes playing and paused instance counts so the offscreen d
 can prove that no sound continues behind the comfort menu.
 
 ## Streaming and procedural content
+
+Pass-2 audit additions (ENV-124 to ENV-133, see [VISUAL_AUDIT_2.md](VISUAL_AUDIT_2.md)) live in
+focused headers: `VergeGeometry.hpp` (rural and urban lineside zones, cable trough, wildflower
+clumps, palisade), `TerrainPatchGeometry.hpp::addGridTerrainCell` (diagonal-preserving terrain
+subdivision), `LandscapeVariation.hpp` (field-boundary layouts and tramline spacing),
+`ProceduralMaterials` (irregular per-side parcel boundaries and arable parcels),
+`FacadeGeometry.hpp` (house and block styles, rural outbuildings), `StationGeometry.hpp` (canopy
+palettes and valance) and `TrainExteriorGeometry.hpp::addCabBodyside`.
 
 The 286.4 km route is never loaded as a static mesh. `StreamingWorld` divides it into deterministic
 250 m chunks and retains the current chunk plus three on either side (fewer at endpoints). A fixed

@@ -126,3 +126,99 @@ The original periodic full-window stall is addressed in this measured corridor.
 The subsequent populated 2.5-hour journey in [STABILITY.md](STABILITY.md)
 completed 2,470 prepared swaps and both terminal reversals with zero late
 preparations. Neither result claims that every possible frame hitch is gone.
+
+## PERF-002 — remaining streaming risks
+
+PERF-001 left four named risks: large individual uploads, separately rebuilt track, missed
+deadlines under heavy load, and the memory of the second GPU window. The 2026-10-12 pass
+measured each with new diagnostics, found a fifth (a hard buffer-size limit) and repaired the
+ones that caused hitches or failures.
+
+### Diagnostics added
+
+- `world_gpu_mb`, `world_largest_material`, `world_largest_material_mb`,
+  `world_largest_material_vertices`, `world_gpu_segments`: GPU payload of the active window.
+- `track_rebuilds`, `track_rebuild_{total,max}_ms` (render-thread time, including the initial
+  synchronous build), `track_generation_max_ms`, `track_prefetch_hits`,
+  `track_synchronous_builds`, `track_late_prefetches`.
+- [`tools/test_streaming_risks.py`](../tools/test_streaming_risks.py): six fixed moving
+  scenarios on the private GPU display that also sample the process's own amdgpu memory from
+  `/proc/<pid>/fdinfo` (`drm-memory-vram`, `drm-memory-gtt`).
+- `trainsim_world_benchmark` (developer target, excluded from normal builds): thread-CPU time
+  of complete world windows.
+
+### Findings
+
+1. **Buffer limit (new, fatal).** CNA rejects any vertex buffer above the graphics profile's
+   67,108,863 bytes. On the first pass-2 build the opaque world material at Alderwick Central
+   held 1.69 M vertices (60.8 MB of vertex data), and at Northbridge
+   (km 192.4) it exceeded the limit: the simulator stopped with *"The vertex buffer exceeds the
+   active graphics profile limit"* (`audit2-repairs-station-9-after.log` of the first attempt).
+   Subtracting the counted pass-2 additions (about 330 k vertices of palisade, trough and
+   balconies) puts the pre-pass-2 material near 49 MB, so the margin was already thin.
+2. **Large individual uploads.** A whole material was submitted in one frame; the before
+   ride's largest single submission was 41.5 ms.
+3. **Track rebuilds.** The 2 km track batch was regenerated and uploaded synchronously on the
+   render thread at every 500 m anchor: 24 rebuilds in the 8x ride, 40 ms average and 59.1 ms
+   maximum (`streaming-risk-probe-x8-km52.log`).
+4. **Missed deadlines.** With one material per frame, staging needed up to fourteen frames,
+   so preparation throughput, not generation, limited fast travel.
+5. **Second GPU window.** One world window is 61–76 MB of vertex and index data (90 MB in the
+   densest city window); a track batch is about 18 MB.
+
+### Repairs
+
+- `meshSegments` splits any mesh into contiguous spans of at most 262,144 vertices (9 MiB);
+  `GpuMesh` holds one buffer pair per segment and draws them in turn. Small meshes keep one
+  segment and their former upload path. Segment spans are prepared on the worker.
+- `GpuMesh::stageSegment` writes one segment in 3 MiB slices through CNA's offset uploads.
+  Staging continues within a 4 ms per-frame budget, so small materials share a frame, and
+  `stagedUploadBytesPerFrame` raises the per-frame amount when the remaining distance to the
+  boundary (from the recent metres per frame) would otherwise be too short.
+- `TrackGeometry` moves track generation into a CPU-only builder. A worker prepares the next
+  500 m anchor in the service direction; the render thread stages it like the world window and
+  swaps all three track meshes at the switch point. Teleports, quality changes and reversals
+  keep the synchronous fallback.
+- Discarded predictions reset partial staging (`GpuMesh::resetStaging`).
+
+### Results
+
+Final binary `3e89842194b2…f0e`, private Radeon 780M, High, window view, no avatars, 1,800
+frames (3,600 at 1x), load average 2–3 during the runs. Logs, per-run GPU samples and the
+summary are `build/visual-audit/streaming-risk-final-*`.
+
+| Scenario | p95 / p99 / max (ms) | world hits / late | track hits / late | largest slice | GPU VRAM + GTT | peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8x from km 52 (repeat) | 26.0 / 26.5 / 29.5 | 45 / 0 | 23 / 0 | 18.7 ms | 43 + 395 MiB | 833 MiB |
+| 16x from km 52 | 26.3 / 26.8 / 33.9 | 109 / 0 | 55 / 0 | 19.2 ms | 40 + 415 MiB | 855 MiB |
+| 24x from km 52 | 26.7 / 39.4 / 56.7 | 150 / 3 | 76 / 1 | 23.8 ms | 50 + 460 MiB | 970 MiB |
+| 8x through Northbridge | 26.1 / 26.6 / 27.2 | 41 / 0 | 21 / 0 | 20.0 ms | 67 + 412 MiB | 972 MiB |
+| 1x through Northbridge | 26.3 / 26.7 / 29.0 | 15 / 0 | 8 / 0 | 13.5 ms | 80 + 379 MiB | 903 MiB |
+| 8x on two CPU cores | 26.2 / 26.6 / 27.8 | 45 / 0 | 23 / 0 | 24.7 ms | 70 + 377 MiB | 823 MiB |
+
+The first 8x run of the batch, immediately after the private compositor started, measured
+p99 37.4 ms and maximum 105.1 ms with a 384 ms generation outlier; an immediate repeat and the
+two-core run on the same route were clean, so this is recorded as an unattributed transient,
+not hidden. The matched visual-audit ride (`audit2-repairs-moving-*`) improved from p99 27.3 /
+maximum 55.9 ms to 26.8 / 27.8 ms, and its largest single upload from 41.5 to 17.0 ms. The
+Northbridge station capture that previously aborted now renders its 1.86 M opaque vertices in
+eight segments (20 world segments in total, 136 draw calls).
+
+Thread-CPU generation of a complete High window (`trainsim_world_benchmark 2 50 56 0.25`, host
+load about 8) averaged 212.6 ms (maximum 283.1 ms); Medium 119.7 ms; Low 17.2 ms; the
+Northbridge approach 188.7 ms with a 75.8 MB largest material. A track batch takes 17–19 ms on
+the worker (42–87 ms with two cores or under load).
+
+### Remaining limits
+
+- At 24x journey speed generation, not staging, is the limit: 3 world and 1 track preparations
+  were late, each completed synchronously.
+- Initial loads, teleports and setting changes still build and upload a whole window and track
+  batch in one frame (hundreds of milliseconds), as designed.
+- `world_upload_max_ms` and the "largest slice" column time one slice submission, not GPU
+  completion. Driver allocation of a new buffer size can still cost tens of milliseconds.
+- The GPU figures are this process's own amdgpu client memory; on this APU most buffers live in
+  GTT. They are not a portable VRAM budget and include textures, avatars and the train.
+- Segmentation adds one draw call per extra segment (none to three in the measured windows).
+- No result here claims that every frame hitch is gone; the private compositor's ~26 ms cadence
+  also hides any finer pacing behaviour.

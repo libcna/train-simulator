@@ -54,15 +54,16 @@ inline void sideBox(MeshBuilder& mesh,float side,float inner,float outer,float y
 // between the bogies. Replaces the single 0.05..0.86 m wall box of the earlier shell.
 inline void addLowerBodyside(MeshBuilder& mesh,float side,float start,float end,float centre,
                              float doorBegin,float doorEnd,
-                             const Microsoft::Xna::Framework::Color& shell)
+                             const Microsoft::Xna::Framework::Color& shell,
+                             bool firstBogie=true,bool secondBogie=true)
 {
     using namespace Microsoft::Xna::Framework;
     const Color skirt(74,82,86,255),frame(40,44,46,255),wheel(52,56,58,255);
     const Color wheelFace(84,88,90,255),equipment(58,63,66,255),lid(88,94,97,255);
     constexpr float inner=1.42f,outer=1.50f;
     // Upper part of the lower band keeps the shell colour on both sides of the doorway.
-    detail::sideBox(mesh,side,inner,outer,kSkirtTop,0.86f,start,doorBegin,shell);
-    detail::sideBox(mesh,side,inner,outer,kSkirtTop,0.86f,doorEnd,end,shell);
+    if (doorBegin-start>0.01f) detail::sideBox(mesh,side,inner,outer,kSkirtTop,0.86f,start,doorBegin,shell);
+    if (end-doorEnd>0.01f) detail::sideBox(mesh,side,inner,outer,kSkirtTop,0.86f,doorEnd,end,shell);
     // Recessed skirt segments outside the bogie cut-outs; the doorway keeps its own sill.
     const float bogieA=centre-kBogieOffset,bogieB=centre+kBogieOffset;
     const auto skirtSpan=[&](float z0,float z1) {
@@ -73,12 +74,18 @@ inline void addLowerBodyside(MeshBuilder& mesh,float side,float start,float end,
                                    std::pair{std::max(z0,doorEnd),z1}})
             if (s1-s0>0.05f) detail::sideBox(mesh,side,inner,inner+0.04f,0.05f,kSkirtTop,s0,s1,skirt);
     };
-    skirtSpan(start,bogieA-kBogieHalfLength);
-    skirtSpan(bogieA+kBogieHalfLength,bogieB-kBogieHalfLength);
-    skirtSpan(bogieB+kBogieHalfLength,end);
+    float skirtCursor=start;
+    for (const auto& [bogie,present] : {std::pair{bogieA,firstBogie},std::pair{bogieB,secondBogie}})
+        if (present)
+        {
+            skirtSpan(skirtCursor,bogie-kBogieHalfLength);
+            skirtCursor=bogie+kBogieHalfLength;
+        }
+    skirtSpan(skirtCursor,end);
     // Dark backing behind every cut-out so the interior never shows through.
     for (float bogie : {bogieA,bogieB})
     {
+        if ((bogie==bogieA && !firstBogie) || (bogie==bogieB && !secondBogie)) continue;
         detail::sideBox(mesh,side,1.19f,1.23f,0.05f,kSkirtTop,bogie-kBogieHalfLength-0.02f,
                         bogie+kBogieHalfLength+0.02f,Color(26,29,30,255));
         // Bogie frame, bolster and two wheelsets with axleboxes.
@@ -96,6 +103,7 @@ inline void addLowerBodyside(MeshBuilder& mesh,float side,float start,float end,
                             frame);
         }
     }
+    if (!firstBogie || !secondBogie) return;
     // Underframe equipment between the bogies: battery box, converter and brake module.
     for (const auto& [z0,z1,top] : {std::array{bogieA+kBogieHalfLength+0.35f,
                                                bogieA+kBogieHalfLength+1.85f,0.36f},
@@ -217,6 +225,83 @@ inline void addExteriorBellows(MeshBuilder& mesh,float z)
         const float fz=z+static_cast<float>(fold_)*0.085f;
         mesh.addRoundedBoxXZ(Vector3{-1.36f,0.36f,fz-0.022f},Vector3{1.36f,3.02f,fz+0.022f},
                              0.14f,2,fold_%2==0 ? fold : rubber);
+    }
+}
+
+// Driving-cab bodyside (ENV-133) between the passenger bulkhead (`inner`) and the cab front
+// (`nose`); `direction` is +1 for the cab at +Z. A solid equipment-room wall with a louvre
+// grille, a hinged cab door with drop-light, grab handles and kick step, and a fixed side window
+// replace the former single 7 m pane. The lower band, livery and a bogie under the cab match
+// the passenger cars. Glazing goes to the transparent batch.
+inline constexpr float kCabDoorFromNose=2.55f;
+inline constexpr float kCabDoorWidth=0.86f;
+inline constexpr float kCabBogieFromNose=3.4f;
+inline void addCabBodyside(MeshBuilder& mesh,MeshBuilder& glass,float side,float direction,
+                           float inner,float nose,const Microsoft::Xna::Framework::Color& shell,
+                           const Microsoft::Xna::Framework::Color& serviceColour)
+{
+    using namespace Microsoft::Xna::Framework;
+    const Color band(44,52,56,255),seal(22,27,29,255),louvre(70,78,82,255),steel(150,156,158,255);
+    const float start=std::min(inner,nose),end=std::max(inner,nose);
+    const auto z=[&](float fromNose) { return nose-direction*fromNose; };
+    const auto span=[&](float a,float b) { return std::pair{std::min(z(a),z(b)),std::max(z(a),z(b))}; };
+    // Lower body, skirt and one bogie close to the cab, as on a driving trailer.
+    const float bogie=z(kCabBogieFromNose);
+    const float centre=direction>0 ? bogie-kBogieOffset : bogie+kBogieOffset;
+    // No passenger doorway here: a zero-width "door" at the section end keeps every band inside.
+    addLowerBodyside(mesh,side,start,end,centre,end,end,shell,direction<0,direction>0);
+    addLiveryBands(mesh,side,start,end,end,end,serviceColour);
+    // Structural wall from sill to cantrail; openings are cut by splitting it into spans.
+    const auto wall=[&](float y0,float y1,float a,float b,const Color& colour) {
+        const auto [z0,z1]=span(a,b);
+        if (z1-z0>0.01f) detail::sideBox(mesh,side,1.42f,1.50f,y0,y1,z0,z1,colour);
+    };
+    const float length=std::abs(nose-inner);
+    const float doorBack=kCabDoorFromNose,doorFront=kCabDoorFromNose-kCabDoorWidth;
+    const float windowBack=doorFront-0.22f,windowFront=0.30f;
+    wall(0.86f,2.55f,doorBack,length,shell);                     // Equipment-room wall.
+    wall(0.86f,1.24f,windowBack,windowFront,shell);              // Below the side window.
+    wall(2.40f,2.55f,windowBack,windowFront,shell);              // Above the side window.
+    wall(0.86f,2.55f,doorFront,windowBack,shell);                // Door-to-window post.
+    wall(0.86f,2.55f,windowFront,0.0f,shell);                    // Front corner post.
+    // Dark window-band skin continues the passenger-car identity across the equipment room.
+    {
+        const auto [z0,z1]=span(doorBack+0.25f,length-0.15f);
+        detail::sideBox(mesh,side,1.501f,1.505f,1.18f,2.34f,z0,z1,band);
+        // Louvred equipment-room grille in the band.
+        const auto [g0,g1]=span(doorBack+0.9f,doorBack+2.6f);
+        for (float y=1.36f;y<2.16f;y+=0.10f)
+            detail::sideBox(mesh,side,1.505f,1.512f,y,y+0.045f,g0,g1,louvre);
+        detail::sideBox(mesh,side,1.505f,1.514f,1.30f,2.22f,g0-0.03f,g0,seal);
+        detail::sideBox(mesh,side,1.505f,1.514f,1.30f,2.22f,g1,g1+0.03f,seal);
+    }
+    // Hinged cab door: leaf with drop-light, perimeter seal, grab handles and a kick step.
+    {
+        const auto [d0,d1]=span(doorBack,doorFront);
+        detail::sideBox(mesh,side,1.44f,1.497f,0.30f,2.42f,d0,d1,shell);
+        detail::sideBox(mesh,side,1.497f,1.505f,0.44f,0.80f,d0,d1,serviceColour);
+        detail::sideBox(mesh,side,1.497f,1.506f,0.80f,0.845f,d0,d1,Color(226,186,42,255));
+        detail::sideBox(mesh,side,1.497f,1.508f,0.28f,2.44f,d0-0.03f,d0,seal);
+        detail::sideBox(mesh,side,1.497f,1.508f,0.28f,2.44f,d1,d1+0.03f,seal);
+        detail::sideBox(mesh,side,1.497f,1.508f,2.42f,2.45f,d0,d1,seal);
+        detail::sideBox(mesh,side,1.497f,1.504f,1.52f,2.30f,d0+0.10f,d1-0.10f,seal);
+        glass.addBox(Vector3{std::min(side*1.44f,side*1.503f),1.55f,d0+0.13f},
+                     Vector3{std::max(side*1.44f,side*1.503f),2.27f,d1-0.13f},Color(52,96,116,70));
+        for (float handle : {d0-0.09f,d1+0.09f})
+            detail::sideBox(mesh,side,1.50f,1.545f,0.95f,2.05f,handle-0.017f,handle+0.017f,steel);
+        detail::sideBox(mesh,side,1.30f,1.56f,0.16f,0.21f,d0+0.06f,d1-0.06f,Color(64,68,70,255));
+        detail::sideBox(mesh,side,1.42f,1.56f,0.21f,0.40f,d0+0.10f,d0+0.14f,Color(64,68,70,255));
+        detail::sideBox(mesh,side,1.42f,1.56f,0.21f,0.40f,d1-0.14f,d1-0.10f,Color(64,68,70,255));
+    }
+    // Fixed side window with a dark gasket.
+    {
+        const auto [w0,w1]=span(windowBack,windowFront);
+        detail::sideBox(mesh,side,1.501f,1.508f,1.24f,1.28f,w0,w1,seal);
+        detail::sideBox(mesh,side,1.501f,1.508f,2.36f,2.40f,w0,w1,seal);
+        detail::sideBox(mesh,side,1.501f,1.508f,1.24f,2.40f,w0,w0+0.04f,seal);
+        detail::sideBox(mesh,side,1.501f,1.508f,1.24f,2.40f,w1-0.04f,w1,seal);
+        glass.addBox(Vector3{std::min(side*1.42f,side*1.50f),1.28f,w0+0.04f},
+                     Vector3{std::max(side*1.42f,side*1.50f),2.36f,w1-0.04f},Color(52,96,116,64));
     }
 }
 

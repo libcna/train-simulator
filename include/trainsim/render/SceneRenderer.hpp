@@ -138,6 +138,26 @@ struct RenderStats
     int terminalShedColumns = 0;
     int bridgeParapetPosts = 0;
     int fencePosts = 0;
+    int cableTroughUnits = 0;
+    int vergeFlowerClumps = 0;
+    int palisadePosts = 0;
+    int houseOutbuildings = 0;
+    int blockBalconies = 0;
+    int canopyValanceBoards = 0;
+    int tramlineSegments = 0;
+    double worldGpuMegabytes = 0;
+    double largestWorldMaterialMegabytes = 0;
+    double largestWorldMaterialVertices = 0;
+    int largestWorldMaterial = -1;
+    int worldGpuSegments = 0;
+    std::uint64_t trackRebuilds = 0;
+    std::uint64_t trackPrefetchHits = 0;
+    std::uint64_t trackSynchronousBuilds = 0;
+    std::uint64_t trackLatePrefetches = 0;
+    double trackGenerationMaxMs = 0;
+    double trackRebuildTotalMs = 0;
+    double trackRebuildMaxMs = 0;
+    int fieldBoundaryTrees = 0;
     int stationClockHands = 0;
     int levelCrossingBarriers = 0;
     int levelCrossingWarningLights = 0;
@@ -209,7 +229,7 @@ public:
 
 private:
     void buildInterior();
-    void rebuildTrack(const Sim::Route& route, double anchorDistance);
+    void updateTrack(const Sim::Route& route, const Sim::ServiceState& service);
     void updateStaticWorld(const Sim::Route& route, const World::StreamingWorld& world,
                            const Sim::ServiceState& service);
     void rebuildInformationDisplays(const Sim::Route& route, const Sim::ServiceState& service,
@@ -283,6 +303,7 @@ private:
     std::unique_ptr<GpuMesh> interiorShadows_;
     std::unique_ptr<GpuMesh> interiorLightGradients_;
     std::unique_ptr<GpuMesh> interiorEmitters_;
+    std::unique_ptr<GpuMesh> interiorLettering_;
     std::unique_ptr<GpuMesh> windowGlass_;
     std::array<std::unique_ptr<GpuMesh>,2> windowReflections_;
     std::unique_ptr<GpuMesh> sunlightPatches_;
@@ -366,10 +387,18 @@ private:
     float toiletDoorOpenAmount_ = 0.0f;
     float tunnelLightingMix_ = 0.0f;
     double trackAnchorDistance_ = -1.0;
+    std::uint64_t trackRebuilds_ = 0;
+    double trackRebuildTotalMs_ = 0.0;
+    double trackRebuildMaxMs_ = 0.0;
+    double trackGenerationMaxMs_ = 0.0;
+    double streamingMetresPerFrame_ = 0.0;
+    double lastStreamingDistance_ = -1.0;
     double worldAnchorDistance_ = -1.0;
     std::int64_t worldAnchorChunk_ = -1;
     struct WorldStreamingState;
     std::unique_ptr<WorldStreamingState> worldStreaming_;
+    struct TrackStreamingState;
+    std::unique_ptr<TrackStreamingState> trackStreaming_;
     WorldGeometryCounters worldCounters_;
     int tracksideKilometrePosts_ = 0;
     int trackFastenerAssemblies_ = 0;

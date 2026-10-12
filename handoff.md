@@ -1,6 +1,6 @@
 # Train Simulator — AI development handoff
 
-Updated: 2026-10-11 (finite streaming/input/stability scope completed).
+Updated: 2026-10-12 (second visual audit, PERF-002 streaming risks and design-gap repairs).
 Repository: `libcna/train-simulator`, current branch `develop`. Written for the next agent
 (expected: Codex, "astra high") starting from a fresh context.
 
@@ -27,6 +27,13 @@ Repository: `libcna/train-simulator`, current branch `develop`. Written for the 
   multi-hour stability/memory test, evaluate it and fix discovered failures.
   **Do not start further audits or add unrelated improvements after those items.**
   This supersedes the indefinite audit loop requested earlier the same day.
+- 2026-10-12: the owner resumed from this handoff and asked for a new visual
+  audit, an analysis of the remaining streaming risks and repairs of the visual
+  design gaps. Done in this session: pass-2 audit ENV-124 to ENV-133 (all
+  addressed, `docs/VISUAL_AUDIT_2.md`) and PERF-002 (`docs/STREAMING.md`). The
+  work was committed and pushed to `origin/develop` with the owner's approval.
+  Do not start further work on
+  your own.
 - The owner's conversation is Czech; all repository content, commit messages
   and this document are English.
 
@@ -43,7 +50,8 @@ automated runs with `--frames`, `--run-seconds`, `--screenshot` or
 `--interaction-smoke` skip it.
 
 Read, in this order: `README.md`, `docs/ARCHITECTURE.md`, `docs/VISUAL_AUDIT.md`,
-`docs/VISUAL_CAMPAIGN.md`, `docs/AUDIT.md`, `bugs.md`, then `docs/STREAMING.md`. Automated tests do not
+`docs/VISUAL_AUDIT_2.md`, `docs/VISUAL_CAMPAIGN.md`, `docs/AUDIT.md`, `bugs.md`, then
+`docs/STREAMING.md` (PERF-001 and PERF-002) and `docs/STABILITY.md`. Automated tests do not
 prove realism; only inspected engine screenshots do.
 
 ## Non-negotiable constraints
@@ -72,9 +80,11 @@ prove realism; only inspected engine screenshots do.
 ```bash
 export CCACHE_DIR=/rv/cnaccache CCACHE_BASEDIR=/rv
 cmake --build build --parallel 4                 # incremental; already configured
-./build/trainsim_render_tests                    # 178 render/geometry unit tests
+./build/trainsim_render_tests                    # 193 render/geometry unit tests
 ./build/trainsim_tests                           # 128 simulation unit tests
 env LP_NUM_THREADS=4 ctest --test-dir build --parallel 1 --output-on-failure   # 69 tests; shared-host duration varies
+cmake --build build --parallel 4 --target trainsim_world_benchmark   # optional CPU window benchmark
+python3 tools/test_streaming_risks.py            # six moving GPU scenarios (wraps itself in the private display)
 ./build/train-simulator                          # interactive play (start menu)
 ```
 
@@ -148,9 +158,37 @@ Also: `Route.hpp` exports `kValleyViaductBegin/EndMetres` and
 `kTunnelExtentsMetres`. `SceneRenderer.cpp` remains large (~9,300 lines); keep
 adding reusable geometry in headers rather than inline.
 
+## Implementation map of the 2026-10-12 session (ENV-124 to ENV-133, PERF-002)
+
+| Area | Where | Counters / tools |
+| --- | --- | --- |
+| Rural/urban verge zones, cable trough, wildflowers, palisade | `VergeGeometry.hpp`; near-cell grid via `TerrainPatchGeometry.hpp::addGridTerrainCell` | `cable_trough_units`, `verge_flower_clumps`, `palisade_posts` |
+| Irregular per-side parcels, boundary types, tramlines | `ProceduralMaterials::ruralParcelBoundary/Index/Arable`, `LandscapeVariation.hpp::fieldBoundaryLayout`, `kTramlineLaterals` | `field_boundary_trees`, `tramline_segments` |
+| House styles and outbuildings | `FacadeGeometry.hpp::houseStyle/houseEnvelope/addRuralOutbuilding`, `StreamingWorld.hpp::houseHasOutbuilding` (parcel reservation) | `house_outbuildings` |
+| Apartment/tower palettes, balconies, spandrels; lighter sheds | `FacadeGeometry.hpp::blockStyle`, Apartment/Tower/Warehouse cases | `block_balconies` |
+| Ground bounce and uplight | `Daylight.hpp`, `OpenGL33FacadeEffect.cpp`, exterior light setup in `SceneRenderer::draw` | — |
+| Canopy palettes and rural valance | `StationGeometry.hpp::canopyPalette/addCanopyValance` | `canopy_valance_boards` |
+| Antialiased fixed signage | `PassengerDisplayText.hpp::addPrintedPlaqueText`, `interiorLettering_` | — |
+| Driving-cab bodyside | `TrainExteriorGeometry.hpp::addCabBodyside` | — |
+| Buffer segments and sliced staging | `MeshBuilder::meshSegments`, `GpuMesh` segments / `stageSegment`, `stagedUploadBytesPerFrame` | `world_gpu_mb`, `world_largest_material*`, `world_gpu_segments` |
+| Track batch on a worker | `WorldGeometry.hpp::TrackGeometry`, `SceneRenderer::updateTrack` | `track_*` |
+
+Capture scripts: `tools/capture_visual_audit_pass2.sh` (59-pose baseline, prefix `audit2`),
+`tools/capture_audit2_repairs.sh <stage>` (matched repair poses plus 600-frame stationary and
+1,800-frame 8x ride; `before` is preserved), `tools/test_streaming_risks.py`. Evidence is in
+`build/visual-audit/audit2-*`, `audit2-repairs-*`, `streaming-risk-*` and the comparison sheets
+in `build/visual-audit/audit2-sheets/`.
+
 ## Known open issues (outside the ranked list)
 
-1. **Streaming follow-up.** CPU-only `WorldGeometry` preparation now runs on one
+1. **Streaming follow-up (updated by PERF-002, 2026-10-12).** World materials are now split
+   below CNA's 64 MiB buffer limit (Northbridge previously exceeded it after the pass-2
+   additions and aborted), staged in 3 MiB slices with an urgency-raised 4 ms budget, and the
+   track batch is prepared on a worker. Measured remaining limits: at 24x journey speed
+   generation is the bottleneck (3 late world, 1 late track preparation); synchronous fallbacks
+   still cost hundreds of ms; one unattributed transient (p99 37 ms) on the first run after the
+   compositor started. Details in `docs/STREAMING.md`. Earlier text follows.
+   CPU-only `WorldGeometry` preparation now runs on one
    worker, with a route copy and a separate deterministic world snapshot. The
    render thread stages at most one non-empty material per frame into a second
    GPU window; meshes, counters and anchor swap together at the boundary. Empty
@@ -180,12 +218,23 @@ adding reusable geometry in headers rather than inline.
 4. Several frame-time comparisons on 2026-10-10 were distorted by host load
    from other agents (documented per section). Re-measure on a quiet host before
    treating any p95/p99 shift as a regression.
-5. Remaining visual gaps are design-level (stylised avatars, repetitive
-   procedural buildings, flat vertex-colour materials in places); they are not
-   listed defects and need a new screenshot-based ranking if the owner wants
-   another pass.
+5. Remaining visual gaps after pass 2: avatar style is the immutable CNA catalog's;
+   houses and blocks still share one plan and window module each; the verge is vertex colour on
+   a neutral detail texture; flower heads are small at seated distance. A further pass needs new
+   screenshots and a new ranked list.
 
-## Current continuation verification
+## Current verification (2026-10-12)
+
+Final binary SHA-256 `3e89842194b2ee994aabca6e64545cc164a51a891a30ceebc8fc36a122648f0e`:
+render/geometry **193/193**, simulation **128/128**, full CTest **69/69** in 149.9 s
+(`build/visual-audit/audit2-ctest-final.log`). The matched 8x ride improved from p99 27.3 /
+max 55.9 ms to 26.8 / 27.8 ms with 45 prepared swaps and no late preparation; the stationary
+sample stayed at the compositor's ~26 ms cadence (p99 26.1 → 26.6 ms) with 7% more triangles.
+All six PERF-002 scenarios exited 0 (see `docs/STREAMING.md`). Dependencies were not modified:
+CNA (`2a5100d72` with other agents' uncommitted edits in its worktree) and sharp-runtime
+(`c20373ba`) were only read and built from.
+
+## Earlier continuation verification (2026-10-11)
 
 The original 2026-10-10 checkpoint was commit `41cbc1d`, 67/67 CTests,
 176 render tests and 124 simulation tests. The resumed checkout was clean on
@@ -225,7 +274,7 @@ The first `stability-long-*` attempt was cut off by a host restart at about
 50 minutes, with no final result. Preserve it as incomplete evidence. The
 replacement `stability-restart-*` run completed the full 9,000 seconds and its
 summary reports success. No test process needs to be resumed or restarted.
-The finite engineering and verification scope is complete. Do not start a new
-visual audit or other additional work. Dependencies remain
-read-only. Verify commits and worktree state with `git log -1` / `git status -sb`;
+That 2026-10-11 scope was complete; the 2026-10-12 session above followed an explicit
+new owner request. Do not start further work without the owner's instruction. Dependencies
+remain read-only. Verify commits and worktree state with `git log -1` / `git status -sb`;
 do not rely on this document alone.

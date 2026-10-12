@@ -687,6 +687,26 @@ TrainSimulatorGame::~TrainSimulatorGame()
                   << " tunnel_lining_rings=" << renderStats_.tunnelLiningRings
                   << " tunnel_marker_plates=" << renderStats_.tunnelMarkerPlates
                   << " fence_posts=" << renderStats_.fencePosts
+                  << " cable_trough_units=" << renderStats_.cableTroughUnits
+                  << " verge_flower_clumps=" << renderStats_.vergeFlowerClumps
+                  << " palisade_posts=" << renderStats_.palisadePosts
+                  << " house_outbuildings=" << renderStats_.houseOutbuildings
+                  << " block_balconies=" << renderStats_.blockBalconies
+                  << " canopy_valance_boards=" << renderStats_.canopyValanceBoards
+                  << " tramline_segments=" << renderStats_.tramlineSegments
+                  << " world_gpu_mb=" << renderStats_.worldGpuMegabytes
+                  << " world_largest_material=" << renderStats_.largestWorldMaterial
+                  << " world_largest_material_mb=" << renderStats_.largestWorldMaterialMegabytes
+                  << " world_largest_material_vertices=" << renderStats_.largestWorldMaterialVertices
+                  << " world_gpu_segments=" << renderStats_.worldGpuSegments
+                  << " track_rebuilds=" << renderStats_.trackRebuilds
+                  << " track_rebuild_total_ms=" << renderStats_.trackRebuildTotalMs
+                  << " track_rebuild_max_ms=" << renderStats_.trackRebuildMaxMs
+                  << " track_generation_max_ms=" << renderStats_.trackGenerationMaxMs
+                  << " track_prefetch_hits=" << renderStats_.trackPrefetchHits
+                  << " track_synchronous_builds=" << renderStats_.trackSynchronousBuilds
+                  << " track_late_prefetches=" << renderStats_.trackLatePrefetches
+                  << " field_boundary_trees=" << renderStats_.fieldBoundaryTrees
                   << " terminal_buffer_stops=" << renderStats_.terminalBufferStops
                   << " terminal_shed_columns=" << renderStats_.terminalShedColumns << '\n';
     }

@@ -22,6 +22,20 @@ enum class FeatureKind : std::uint8_t {
 inline constexpr std::uint32_t kWarehouseCompoundLeader = 1U << 3U;
 inline constexpr std::uint32_t kWarehouseThreeBuildingCompound = 1U << 4U;
 
+// Rural houses whose variant has bit 2 set own a detached barn or garage beside them along the
+// route (ENV-127). Variant bit 0 selects the side; the outbuilding's footprint is a parcel.
+[[nodiscard]] constexpr bool houseHasOutbuilding(std::uint32_t variant,double urbanity) noexcept
+{
+    return urbanity<0.35 && (variant&4U)!=0U;
+}
+inline constexpr double kHouseOutbuildingOffset=13.0;
+inline constexpr double kHouseOutbuildingHalfWidth=3.4;
+inline constexpr double kHouseOutbuildingHalfLength=3.9;
+[[nodiscard]] constexpr double houseOutbuildingDirection(std::uint32_t variant) noexcept
+{
+    return (variant&1U)!=0U ? 1.0 : -1.0;
+}
+
 struct WorldFeature
 {
     double routeDistance = 0.0;

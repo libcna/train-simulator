@@ -31,6 +31,19 @@ struct MeshData
     [[nodiscard]] bool empty() const noexcept { return vertices.empty() || indices.empty(); }
 };
 
+// Contiguous vertex and index spans, each small enough for one GPU buffer. The graphics
+// profile rejects any vertex buffer over 64 MiB, and smaller spans also bound the cost of one
+// streamed upload. MeshBuilder appends each primitive's vertices just before its indices, so a
+// span of consecutive triangles references a compact vertex range.
+struct MeshSegment
+{
+    std::size_t firstVertex = 0, vertexCount = 0, firstIndex = 0, indexCount = 0;
+    bool operator==(const MeshSegment&) const = default;
+};
+inline constexpr std::size_t kMaxMeshSegmentVertices = std::size_t{1} << 18; // 9 MiB of vertices.
+[[nodiscard]] std::vector<MeshSegment> meshSegments(const MeshData& data,
+    std::size_t maxVertices = kMaxMeshSegmentVertices);
+
 class MeshBuilder
 {
 public:

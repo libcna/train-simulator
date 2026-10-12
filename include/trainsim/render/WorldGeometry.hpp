@@ -37,6 +37,18 @@ struct WorldGeometryCounters
     int staticWorldTerminalShedColumns_ = 0;
     int staticWorldBridgeParapetPosts_ = 0;
     int staticWorldFencePosts_ = 0;
+    int staticWorldCableTroughUnits_ = 0;
+    int staticWorldVergeFlowerClumps_ = 0;
+    int staticWorldPalisadePosts_ = 0;
+    int staticWorldHouseOutbuildings_ = 0;
+    int staticWorldBlockBalconies_ = 0;
+    int staticWorldCanopyValanceBoards_ = 0;
+    int staticWorldTramlineSegments_ = 0;
+    std::size_t worldGpuBytes_ = 0;
+    int worldGpuSegments_ = 0;
+    std::size_t largestMaterialBytes_ = 0;
+    std::size_t largestMaterialVertices_ = 0;
+    int largestMaterial_ = -1;
     int staticWorldPlatformSurfaceJoints_ = 0;
     int staticWorldPlatformCanopyLights_ = 0;
     int staticWorldPlatformCanopyDrainageAssemblies_ = 0;
@@ -50,6 +62,7 @@ struct WorldGeometryCounters
     int staticWorldTracksideDrainageSections_ = 0;
     int staticWorldTracksideVergeTufts_ = 0;
     int staticWorldFieldBoundarySegments_ = 0;
+    int staticWorldFieldBoundaryTrees_ = 0;
     int staticWorldDistantWoodlandTrees_ = 0;
     int staticWorldDistantRidgeMasses_ = 0;
     int staticWorldTreeBranchCues_ = 0;
@@ -91,12 +104,45 @@ public:
     void build(const Sim::Route& route, const World::StreamingWorld& world,
                double anchorDistance, int graphicsQuality, float vegetationDistance);
     std::array<MeshBuilder,kWorldMaterialCount> meshes;
+    // GPU buffer spans per material, prepared with the geometry so the render thread can stage
+    // one profile-safe segment per frame (PERF-002).
+    std::array<std::vector<MeshSegment>,kWorldMaterialCount> segments;
     WorldGeometryCounters counters;
     double generationMs = 0;
     std::uint64_t cacheHits = 0, cacheMisses = 0;
 private:
     int graphicsQuality_ = 2;
     float vegetationDistanceMetres_ = 750;
+};
+
+// Bytes that must reach a hidden GPU window per frame for it to be complete two frames before
+// the boundary, given the remaining data, the distance left and the recent metres per frame.
+// Zero when nothing remains; the whole remainder when the boundary is imminent.
+[[nodiscard]] inline std::size_t stagedUploadBytesPerFrame(std::size_t remainingBytes,
+    double remainingMetres,double metresPerFrame) noexcept
+{
+    if (remainingBytes==0) return 0;
+    const double frames=std::max(1.0,std::abs(remainingMetres)/std::max(metresPerFrame,1e-3)-2.0);
+    return static_cast<std::size_t>(std::ceil(static_cast<double>(remainingBytes)/frames));
+}
+
+// CPU-only 2 km permanent-way batch (sleepers, rails, fasteners, turnouts and kilometre posts)
+// around a 500 m anchor. Like WorldGeometry it is prepared on a worker ahead of the next anchor,
+// so the render thread only stages GPU segments and swaps at the boundary (PERF-002).
+inline constexpr std::size_t kTrackMaterialCount = 3;
+struct TrackGeometry
+{
+    void build(const Sim::Route& route, double anchorDistance, int graphicsQuality);
+    [[nodiscard]] std::array<const MeshBuilder*,kTrackMaterialCount> materials() const noexcept
+    {
+        return {&track,&trackBedMaterial,&railHeadMaterial};
+    }
+    MeshBuilder track, trackBedMaterial, railHeadMaterial;
+    std::array<std::vector<MeshSegment>,kTrackMaterialCount> segments;
+    int kilometrePosts = 0, fastenerAssemblies = 0, turnoutPointMotors = 0, turnoutBladeAssemblies = 0;
+    double anchor = -1;
+    int quality = -1;
+    double generationMs = 0;
 };
 
 } // namespace TrainSim::Render

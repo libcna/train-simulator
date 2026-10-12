@@ -219,6 +219,10 @@ if(TRAINSIM_BUILD_TESTS)
         target_compile_definitions(trainsim_render_tests PRIVATE
             TRAINSIM_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
         add_test(NAME trainsim_render COMMAND trainsim_render_tests)
+        # Explicit developer benchmark of streamed world generation (PERF-002), excluded from
+        # normal builds and timing-sensitive CTest gates.
+        add_executable(trainsim_world_benchmark EXCLUDE_FROM_ALL tools/benchmark_world.cpp)
+        target_link_libraries(trainsim_world_benchmark PRIVATE trainsim_render trainsim_warnings)
         foreach(foliage_quality RANGE 0 2)
             add_test(NAME trainsim_foliage_quality_${foliage_quality}
                 COMMAND train-simulator --frames 2 --route-km 68.49 --time-scale 0.01

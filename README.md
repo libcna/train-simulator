@@ -13,8 +13,10 @@ See the evidence and open findings in [the realism audit](docs/AUDIT.md); passin
 does not certify visual realism or resolve the reported intermittent physical-mouse freeze.
 
 The ranked screenshot campaign is tracked in [the visual audit](docs/VISUAL_AUDIT.md); all 123
-listed findings have before/after engine evidence as of 2026-10-10. That closes the listed
-defects, not visual realism in general.
+listed findings have before/after engine evidence as of 2026-10-10. A second screenshot pass
+([VISUAL_AUDIT_2.md](docs/VISUAL_AUDIT_2.md), ENV-124 to ENV-133) addressed the lineside verge,
+repeated houses and blocks, field boundaries, station canopies, interior signage and the cab
+sides on 2026-10-12. That closes the listed defects, not visual realism in general.
 See [the development handoff](handoff.md) for verified progress, remaining work and build constraints.
 
 ## Screenshots
@@ -179,9 +181,10 @@ output rather than external art assets and may be refreshed as the procedural ar
   direction-correct white or red marker lights.
   Moving consists complete a continuous 1.9 km pass before an out-of-view reset, and both their
   spatial audio and geometry follow the same widened parallel alignment through island stations.
-  Static scenery is prepared on a CPU worker ahead of each chunk transition, uploaded one
-  material per frame and published as one complete window. Initial loads and discontinuous
-  changes retain a synchronous fallback; see [streaming evidence](docs/STREAMING.md).
+  Static scenery and the 2 km track batch are prepared on CPU workers ahead of each transition,
+  split into buffer segments below the graphics-profile limit, staged in small per-frame slices
+  and published as complete windows. Initial loads and discontinuous changes retain a
+  synchronous fallback; see [streaming evidence](docs/STREAMING.md) (PERF-001 and PERF-002).
 - A deterministic mipmapped material palette adds fine non-repeating tonal structure to terrain,
   track ballast, polished rail heads, station concrete, lake/estuary water, carriage carpet, seat
   upholstery, resilient vestibule/WC flooring, and close passenger-wall and ceiling panels.
@@ -339,7 +342,9 @@ For repeatable environment QA, `--audit-camera X Y Z YAW PITCH` overrides only t
 render camera (train-local metres, render-space height and angles in degrees).
 It requires `--frames` and `--screenshot`; normal gameplay still cannot leave the
 train. See the [123-finding visual audit](docs/VISUAL_AUDIT.md) and
-`tools/capture_visual_audit.sh` for the baseline capture poses and repair evidence.
+`tools/capture_visual_audit.sh` for the baseline capture poses and repair evidence; the second
+pass uses `tools/capture_visual_audit_pass2.sh` and `tools/capture_audit2_repairs.sh`, and
+`tools/test_streaming_risks.py` runs the moving streaming scenarios with GPU-memory sampling.
 
 For an intermittent camera/input issue, launch normal play with
 `./build/train-simulator --report-state > build/input-session.log 2>&1`.

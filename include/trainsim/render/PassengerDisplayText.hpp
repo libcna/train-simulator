@@ -83,4 +83,35 @@ inline void addPrintedSignText(MeshBuilder& mesh,std::string_view text,float max
             vertices[i].textureCoordinate,vertices[i+1].textureCoordinate,
             vertices[i+2].textureCoordinate,vertices[i+3].textureCoordinate);
 }
+
+// Fixed interior signage in a plane of constant Z: antialiased lettering whose cap line sits at
+// `top`, centred on `centreX`, no taller than `capHeight` and no wider than `maximumWidth`.
+// `mirrored` reads correctly when viewed from +Z, matching the earlier dot-matrix plaques.
+inline void addPrintedPlaqueText(MeshBuilder& mesh,std::string_view text,float top,float z,
+    bool mirrored,const Microsoft::Xna::Framework::Color& colour,float centreX,float capHeight,
+    float maximumWidth)
+{
+    using namespace Microsoft::Xna::Framework;
+    if (text.empty() || capHeight<=0 || maximumWidth<=0) return;
+    float advance=0;
+    int ascent=1;
+    for (unsigned char code : text)
+    {
+        const auto& glyph=DisplayFontData::Glyphs[(code>=32 && code<=126 ? code : '?')-32];
+        advance+=static_cast<float>(glyph.advance64)/64;
+        ascent=std::max(ascent,-glyph.top);
+    }
+    const float scale=std::min(capHeight/static_cast<float>(ascent),maximumWidth/(advance+4));
+    MeshBuilder glyphs;
+    addPassengerScreenText(glyphs,text,top-static_cast<float>(ascent)*scale,z,mirrored,colour,
+        scale,-advance*scale*0.5f,maximumWidth);
+    const auto& vertices=glyphs.data().vertices;
+    for (std::size_t i=0;i+3<vertices.size();i+=4)
+    {
+        const auto shifted=[&](std::size_t k) { return vertices[k].position+Vector3{centreX,0,0}; };
+        mesh.addTexturedQuad(shifted(i),shifted(i+1),shifted(i+2),shifted(i+3),colour,
+            vertices[i].textureCoordinate,vertices[i+1].textureCoordinate,
+            vertices[i+2].textureCoordinate,vertices[i+3].textureCoordinate);
+    }
+}
 } // namespace TrainSim::Render

@@ -646,6 +646,12 @@ Chunk StreamingWorld::generate(std::int64_t index, bool resolveVegetation) const
         }
         parcels.push_back({feature.routeDistance,feature.lateralMetres,
                            halfWidth*feature.scale,halfLength*feature.scale});
+        if (feature.kind==FeatureKind::House
+            && houseHasOutbuilding(feature.variant,route_.sample(feature.routeDistance).urbanity))
+            parcels.push_back({feature.routeDistance+houseOutbuildingDirection(feature.variant)
+                                   *kHouseOutbuildingOffset*feature.scale,
+                               feature.lateralMetres,(kHouseOutbuildingHalfWidth+0.6)*feature.scale,
+                               (kHouseOutbuildingHalfLength+0.6)*feature.scale});
         const auto accessPose=route_.sample(feature.routeDistance);
         if (accessPose.urbanity>0.45 && !accessPose.bridge && !accessPose.tunnel)
             if (const auto access=residentialAccess(feature))

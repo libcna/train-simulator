@@ -41,17 +41,55 @@ const VertexDeclaration& litColorDeclaration()
 GpuMesh::GpuMesh(GraphicsDevice& device, const MeshData& data, bool streamed)
     : streamed_(streamed)
 {
-    if (streamed_) { replace(device,data); return; }
     if (data.empty() || data.indices.size() % 3 != 0)
         throw std::invalid_argument("GpuMesh requires a non-empty triangle list");
-    vertexCount_ = static_cast<int>(data.vertices.size());
-    primitiveCount_ = static_cast<int>(data.indices.size() / 3);
-    vertices_ = std::make_unique<VertexBuffer>(device,
-        litColorDeclaration(), vertexCount_, BufferUsage::WriteOnly);
-    vertices_->SetDataRaw(data.vertices.data(), vertexCount_, static_cast<int>(sizeof(LitColorVertex)));
-    indices_ = std::make_unique<IndexBuffer>(device, IndexElementSize::ThirtyTwoBits,
-                                             static_cast<int>(data.indices.size()), BufferUsage::WriteOnly);
-    indices_->SetData(data.indices.data(), static_cast<int>(data.indices.size()));
+    const auto ranges=meshSegments(data);
+    segments_.resize(ranges.size());
+    for (std::size_t i=0;i<ranges.size();++i) upload(device,data,ranges[i],segments_[i]);
+}
+
+int GpuMesh::upload(GraphicsDevice& device,const MeshData& data,const MeshSegment& range,
+                    Segment& segment)
+{
+    const int vertices=static_cast<int>(range.vertexCount);
+    const int primitives=static_cast<int>(range.indexCount/3);
+    const LitColorVertex* vertexData=data.vertices.data()+range.firstVertex;
+    // Segment indices are rebased to their own vertex buffer; the whole-mesh case needs no copy.
+    std::vector<std::uint32_t> rebased;
+    const std::uint32_t* indexData=data.indices.data()+range.firstIndex;
+    if (range.firstVertex!=0)
+    {
+        rebased.assign(indexData,indexData+range.indexCount);
+        for (auto& index : rebased) index-=static_cast<std::uint32_t>(range.firstVertex);
+        indexData=rebased.data();
+    }
+    if (!streamed_)
+    {
+        segment.vertices=std::make_unique<VertexBuffer>(device,litColorDeclaration(),vertices,
+                                                        BufferUsage::WriteOnly);
+        segment.vertices->SetDataRaw(vertexData,vertices,static_cast<int>(sizeof(LitColorVertex)));
+        segment.indices=std::make_unique<IndexBuffer>(device,IndexElementSize::ThirtyTwoBits,
+                                                      primitives*3,BufferUsage::WriteOnly);
+        segment.indices->SetData(indexData,primitives*3);
+        segment.vertexCount=vertices;
+        segment.primitiveCount=primitives;
+        return 0;
+    }
+    const int reused=(segment.vertices && vertices == segment.vertexCount ? 1 : 0)
+                    +(segment.indices && primitives == segment.primitiveCount ? 1 : 0);
+    if (!segment.vertices || vertices != segment.vertexCount)
+        segment.vertices=std::make_unique<DynamicVertexBuffer>(device,litColorDeclaration(),vertices,
+                                                               BufferUsage::WriteOnly);
+    if (!segment.indices || primitives != segment.primitiveCount)
+        segment.indices=std::make_unique<DynamicIndexBuffer>(device,IndexElementSize::ThirtyTwoBits,
+                                                             primitives*3,BufferUsage::WriteOnly);
+    static_cast<DynamicVertexBuffer&>(*segment.vertices).SetDataRawWithOptionsEXT(
+        vertexData,vertices,static_cast<int>(sizeof(LitColorVertex)),SetDataOptions::Discard);
+    static_cast<DynamicIndexBuffer&>(*segment.indices).SetData(
+        indexData,0,primitives*3,SetDataOptions::Discard);
+    segment.vertexCount=vertices;
+    segment.primitiveCount=primitives;
+    return reused;
 }
 
 int GpuMesh::replace(GraphicsDevice& device, const MeshData& data)
@@ -59,32 +97,104 @@ int GpuMesh::replace(GraphicsDevice& device, const MeshData& data)
     if (!streamed_) throw std::logic_error("Only streamed meshes support replacement");
     if (data.empty() || data.indices.size()%3 != 0)
         throw std::invalid_argument("GpuMesh requires a non-empty triangle list");
-    const int vertices=static_cast<int>(data.vertices.size());
-    const int primitives=static_cast<int>(data.indices.size()/3);
-    const int reused=(vertices_ && vertices == vertexCount_ ? 1 : 0)
-                    +(indices_ && primitives == primitiveCount_ ? 1 : 0);
-    if (!vertices_ || vertices != vertexCount_)
-        vertices_=std::make_unique<DynamicVertexBuffer>(device,litColorDeclaration(),vertices,
-                                                       BufferUsage::WriteOnly);
-    if (!indices_ || primitives != primitiveCount_)
-        indices_=std::make_unique<DynamicIndexBuffer>(device,IndexElementSize::ThirtyTwoBits,
-                                                     primitives*3,BufferUsage::WriteOnly);
-    static_cast<DynamicVertexBuffer&>(*vertices_).SetDataRawWithOptionsEXT(
-        data.vertices.data(),vertices,static_cast<int>(sizeof(LitColorVertex)),SetDataOptions::Discard);
-    static_cast<DynamicIndexBuffer&>(*indices_).SetData(
-        data.indices.data(),0,primitives*3,SetDataOptions::Discard);
-    vertexCount_=vertices;
-    primitiveCount_=primitives;
+    const auto ranges=meshSegments(data);
+    int reused=0;
+    for (std::size_t i=0;i<ranges.size();++i) reused+=replaceSegment(device,data,ranges,i);
     return reused;
+}
+
+int GpuMesh::replaceSegment(GraphicsDevice& device,const MeshData& data,
+                            std::span<const MeshSegment> segments,std::size_t index)
+{
+    if (!streamed_) throw std::logic_error("Only streamed meshes support replacement");
+    if (index>=segments.size() || data.empty() || data.indices.size()%3 != 0)
+        throw std::invalid_argument("GpuMesh segment replacement needs a valid segment");
+    segments_.resize(segments.size());
+    segments_[index].stagedVertices=0;
+    segments_[index].stagedIndices=0;
+    return upload(device,data,segments[index],segments_[index]);
+}
+
+bool GpuMesh::stageSegment(GraphicsDevice& device,const MeshData& data,
+                           std::span<const MeshSegment> segments,std::size_t index,
+                           std::size_t maxBytes,int& reused,std::size_t& submitted)
+{
+    if (!streamed_) throw std::logic_error("Only streamed meshes support staging");
+    if (index>=segments.size() || data.empty() || data.indices.size()%3 != 0)
+        throw std::invalid_argument("GpuMesh segment staging needs a valid segment");
+    segments_.resize(segments.size());
+    const MeshSegment& range=segments[index];
+    Segment& segment=segments_[index];
+    const int vertices=static_cast<int>(range.vertexCount);
+    const int primitives=static_cast<int>(range.indexCount/3);
+    if (segment.stagedVertices==0 && segment.stagedIndices==0)
+    {
+        // Exact-size buffers are kept when the segment shape repeats; otherwise reallocate.
+        reused+=(segment.vertices && vertices==segment.vertexCount ? 1 : 0)
+               +(segment.indices && primitives==segment.primitiveCount ? 1 : 0);
+        if (!segment.vertices || vertices!=segment.vertexCount)
+            segment.vertices=std::make_unique<DynamicVertexBuffer>(device,litColorDeclaration(),
+                                                                   vertices,BufferUsage::WriteOnly);
+        if (!segment.indices || primitives!=segment.primitiveCount)
+            segment.indices=std::make_unique<DynamicIndexBuffer>(device,IndexElementSize::ThirtyTwoBits,
+                                                                 primitives*3,BufferUsage::WriteOnly);
+        segment.vertexCount=vertices;
+        segment.primitiveCount=primitives;
+    }
+    std::size_t budget=std::max<std::size_t>(maxBytes,sizeof(LitColorVertex)*3);
+    if (segment.stagedVertices<range.vertexCount)
+    {
+        const std::size_t count=std::min(range.vertexCount-segment.stagedVertices,
+                                         std::max<std::size_t>(1,budget/sizeof(LitColorVertex)));
+        static_cast<DynamicVertexBuffer&>(*segment.vertices).SetDataRawAtWithOptionsEXT(
+            static_cast<int>(segment.stagedVertices*sizeof(LitColorVertex)),
+            data.vertices.data()+range.firstVertex+segment.stagedVertices,static_cast<int>(count),
+            static_cast<int>(sizeof(LitColorVertex)),
+            segment.stagedVertices==0 ? SetDataOptions::Discard : SetDataOptions::None);
+        segment.stagedVertices+=count;
+        submitted+=count*sizeof(LitColorVertex);
+        budget-=std::min(budget,count*sizeof(LitColorVertex));
+        if (segment.stagedVertices<range.vertexCount || budget==0) return false;
+    }
+    const std::size_t count=std::min(range.indexCount-segment.stagedIndices,
+                                     std::max<std::size_t>(3,budget/sizeof(std::uint32_t)/3*3));
+    std::vector<std::uint32_t> rebased(data.indices.begin()+static_cast<std::ptrdiff_t>(
+                                           range.firstIndex+segment.stagedIndices),
+                                       data.indices.begin()+static_cast<std::ptrdiff_t>(
+                                           range.firstIndex+segment.stagedIndices+count));
+    if (range.firstVertex!=0)
+        for (auto& value : rebased) value-=static_cast<std::uint32_t>(range.firstVertex);
+    static_cast<DynamicIndexBuffer&>(*segment.indices).SetData(
+        static_cast<int>(segment.stagedIndices*sizeof(std::uint32_t)),rebased.data(),0,
+        static_cast<int>(count),
+        segment.stagedIndices==0 ? SetDataOptions::Discard : SetDataOptions::None);
+    segment.stagedIndices+=count;
+    submitted+=count*sizeof(std::uint32_t);
+    if (segment.stagedIndices<range.indexCount) return false;
+    segment.stagedVertices=0;
+    segment.stagedIndices=0;
+    return true;
 }
 
 GpuMesh::~GpuMesh() = default;
 
+int GpuMesh::triangles() const noexcept
+{
+    int total=0;
+    for (const auto& segment : segments_) total+=segment.primitiveCount;
+    return total;
+}
+
 void GpuMesh::draw(GraphicsDevice& device) const
 {
-    device.SetVertexBuffer(vertices_.get());
-    device.SetIndexBuffer(indices_.get());
-    device.DrawIndexedPrimitives(PrimitiveType::TriangleList, 0, 0, vertexCount_, 0, primitiveCount_);
+    for (const auto& segment : segments_)
+    {
+        if (!segment.vertices || segment.primitiveCount<=0) continue;
+        device.SetVertexBuffer(segment.vertices.get());
+        device.SetIndexBuffer(segment.indices.get());
+        device.DrawIndexedPrimitives(PrimitiveType::TriangleList,0,0,segment.vertexCount,0,
+                                     segment.primitiveCount);
+    }
 }
 
 } // namespace TrainSim::Render

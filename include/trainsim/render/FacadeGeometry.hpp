@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <array>
+#include <cstdint>
 
 namespace TrainSim::Render {
 
@@ -72,6 +73,40 @@ inline void addFacadeEndMaterials(MeshBuilder& target,
 inline constexpr int apartmentFloorCount(unsigned variant) noexcept
 {
     return 5+static_cast<int>(variant%4U);
+}
+
+// Urban block identity (ENV-129): render palette, balcony rhythm and plinth tone from a stable
+// route-anchored seed instead of three near-identical grey-blue facades.
+struct BlockStyle
+{
+    Microsoft::Xna::Framework::Color facade{164,154,141,255};
+    Microsoft::Xna::Framework::Color plinth{112,108,100,255};
+    Microsoft::Xna::Framework::Color railing{62,70,74,255};
+    int balconyPattern=0;   // 0 none, 1 inner bays, 2 outer bays, 3 every bay.
+};
+
+inline BlockStyle blockStyle(std::uint32_t seed)
+{
+    using Microsoft::Xna::Framework::Color;
+    static const std::array<Color,8> facades={Color(196,178,150,255),Color(214,206,188,255),
+        Color(178,124,100,255),Color(162,172,152,255),Color(188,186,178,255),
+        Color(156,104,86,255),Color(206,182,124,255),Color(151,164,166,255)};
+    static const std::array<Color,3> plinths={Color(104,100,94,255),Color(122,112,98,255),
+        Color(88,90,92,255)};
+    static const std::array<Color,3> railings={Color(62,70,74,255),Color(150,154,150,255),
+        Color(86,112,120,255)};
+    BlockStyle style;
+    style.facade=facades[seed%facades.size()];
+    style.plinth=plinths[(seed>>5)%plinths.size()];
+    style.railing=railings[(seed>>8)%railings.size()];
+    style.balconyPattern=static_cast<int>((seed>>11)%4U);
+    return style;
+}
+
+[[nodiscard]] inline bool blockBayHasBalcony(int pattern,double bay) noexcept
+{
+    const bool inner=std::abs(bay)<2.0;
+    return pattern==3 || (pattern==1 && inner) || (pattern==2 && !inner);
 }
 
 inline ResidentialEnvelope apartmentEnvelope(float scale,unsigned variant)
@@ -260,6 +295,98 @@ inline void addPitchedRoof(MeshBuilder& walls,MeshBuilder& roof,
 inline ResidentialEnvelope houseEnvelope(float scale)
 {
     return {7*scale,10*scale,6*scale,7.7f*scale,10.8f*scale,8.15f*scale};
+}
+
+// Detached house identity (ENV-127): facade and roof palettes, storeys, door bay, chimneys,
+// porch and roof pitch come from a stable route-anchored seed, so the one house model no
+// longer repeats along the whole line. The outbuilding kind is decided by the world feature.
+struct HouseStyle
+{
+    Microsoft::Xna::Framework::Color facade{188,166,135,255};
+    Microsoft::Xna::Framework::Color roof{121,63,54,255};
+    bool bungalow=false;
+    int doorBay=0;        // -1, 0 or +1 of the three facade bays.
+    int chimneys=1;       // 0 none, 1 right of ridge centre, 2 left, 3 both gable ends.
+    bool porch=false;
+    float pitch=1.0f;     // Roof rise multiplier.
+    bool barn=false;      // Outbuilding kind when present: barn, otherwise a garage.
+};
+
+inline HouseStyle houseStyle(std::uint32_t seed)
+{
+    using Microsoft::Xna::Framework::Color;
+    static const std::array<Color,7> facades={Color(188,166,135,255),Color(214,210,198,255),
+        Color(172,174,168,255),Color(196,162,108,255),Color(190,144,120,255),
+        Color(160,153,140,255),Color(150,92,72,255)};
+    static const std::array<Color,5> roofs={Color(121,63,54,255),Color(96,66,52,255),
+        Color(72,77,84,255),Color(56,58,62,255),Color(148,84,60,255)};
+    HouseStyle style;
+    style.facade=facades[seed%facades.size()];
+    style.roof=roofs[(seed>>4)%roofs.size()];
+    style.bungalow=(seed>>8)%5U==0U;
+    style.doorBay=static_cast<int>((seed>>11)%3U)-1;
+    style.chimneys=static_cast<int>((seed>>14)%4U);
+    style.porch=(seed>>17)%3U==0U;
+    style.pitch=0.82f+static_cast<float>((seed>>20)%5U)*0.11f;
+    style.barn=(seed>>24)%2U==0U;
+    return style;
+}
+
+inline ResidentialEnvelope houseEnvelope(float scale,const HouseStyle& style)
+{
+    const float wall=(style.bungalow ? 3.3f : 6.0f)*scale;
+    const float rise=(style.bungalow ? 2.5f : 2.15f)*style.pitch*scale;
+    return {7*scale,10*scale,wall,7.7f*scale,10.8f*scale,wall+rise};
+}
+
+// Detached barn (dark stained boarding, wide doors) or rendered garage (up-and-over door) in a
+// local frame: X across the route with +X away from the railway, Y up, Z along the route.
+inline void addRuralOutbuilding(MeshBuilder& walls,MeshBuilder& roof,
+    const Microsoft::Xna::Framework::Matrix& placement,float scale,bool barn,
+    const Microsoft::Xna::Framework::Color& render,const Microsoft::Xna::Framework::Color& roofColour)
+{
+    using namespace Microsoft::Xna::Framework;
+    const float hw=(barn ? 3.2f : 2.6f)*scale,hl=(barn ? 3.7f : 3.0f)*scale;
+    const float wall=(barn ? 3.4f : 2.5f)*scale;
+    const Color body=barn ? Color(92,58,44,255) : render;
+    walls.addBox({-hw,0,-hl},{hw,wall,hl},body,placement);
+    const Color dark(46,40,34,255),trim(196,194,184,255);
+    if (barn)
+    {
+        // Vertical batten shadows on the track-facing side and a pair of boarded doors.
+        for (float z=-hl+0.45f*scale;z<hl-0.2f*scale;z+=0.9f*scale)
+            walls.addBox({-hw-0.025f,0.1f,z-0.035f},{-hw,wall-0.1f,z+0.035f},Color(70,44,34,255),
+                         placement);
+        walls.addBox({-hw-0.04f,0,-1.3f*scale},{-hw,2.7f*scale,1.3f*scale},Color(78,52,40,255),placement);
+        walls.addBox({-hw-0.06f,0,-0.03f*scale},{-hw-0.02f,2.7f*scale,0.03f*scale},dark,placement);
+        walls.addBox({-hw-0.06f,1.2f*scale,-1.25f*scale},{-hw-0.02f,1.3f*scale,1.25f*scale},dark,placement);
+    }
+    else
+    {
+        walls.addBox({-hw-0.03f,0,-1.25f*scale},{-hw,2.1f*scale,1.25f*scale},Color(118,124,126,255),
+                     placement);
+        for (float y=0.35f;y<2.05f;y+=0.35f)
+            walls.addBox({-hw-0.04f,y*scale-0.01f,-1.2f*scale},{-hw-0.03f,y*scale+0.01f,1.2f*scale},
+                         Color(96,102,104,255),placement);
+        walls.addBox({-hw-0.05f,2.1f*scale,-1.35f*scale},{-hw,2.2f*scale,1.35f*scale},trim,placement);
+    }
+    walls.addBox({-hw-0.02f,-0.15f,-hl-0.02f},{hw+0.02f,0.12f*scale,hl+0.02f},Color(98,96,90,255),placement);
+    // Gable roof running along Z, with closed gable triangles.
+    const float rise=(barn ? 2.4f : 1.3f)*scale,eave=wall,over=0.25f*scale;
+    const auto p=[&](float x,float y,float z) { return Vector3::Transform(Vector3{x,y,z},placement); };
+    const Vector3 a=p(-hw-over,eave-0.05f,-hl-over),b=p(-hw-over,eave-0.05f,hl+over);
+    const Vector3 c=p(0,eave+rise,-hl-over),d=p(0,eave+rise,hl+over);
+    const Vector3 e=p(hw+over,eave-0.05f,-hl-over),f=p(hw+over,eave-0.05f,hl+over);
+    roof.addQuad(a,b,d,c,roofColour);
+    roof.addQuad(f,e,c,d,roofColour);
+    roof.addQuad(c,d,b,a,Color(60,58,54,255));
+    roof.addQuad(d,c,e,f,Color(60,58,54,255));
+    for (float z : {-hl,hl})
+    {
+        const Vector3 l=p(-hw,eave,z),r=p(hw,eave,z),top=p(0,eave+rise-0.05f,z);
+        walls.addTriangle(l,r,top,body);
+        walls.addTriangle(top,r,l,body);
+    }
 }
 
 inline ResidentialEnvelope townhouseEnvelope(float scale,unsigned variant)

@@ -3,6 +3,8 @@
 #include "trainsim/render/MeshBuilder.hpp"
 #include <algorithm>
 #include <array>
+#include <span>
+#include <vector>
 
 namespace TrainSim::Render {
 
@@ -72,6 +74,67 @@ void addSubdividedTerrainCell(MeshBuilder& mesh,
             mesh.addTexturedQuad(point(u,v),point(un,v),point(un,vn),point(u,vn),
                 colour(u,v),colour(un,v),colour(un,vn),colour(u,vn),
                 uv(u,v),uv(un,v),uv(un,vn),uv(u,vn));
+        }
+}
+
+// Arbitrary U (along) and V (across) cuts for finer vertex-colour detail. Sub-rectangles that
+// straddle the source a-c diagonal (u == v) are split on it, so every emitted triangle lies in
+// one of the two authoritative source triangles and terrain height never changes.
+template<class ColourAt,class TextureAt>
+void addGridTerrainCell(MeshBuilder& mesh,
+    const std::array<Microsoft::Xna::Framework::Vector3,4>& corners,
+    std::span<const float> uCuts,std::span<const float> vCuts,ColourAt colour,TextureAt uv)
+{
+    using namespace Microsoft::Xna::Framework;
+    const auto point=[&](Vector2 p) {
+        return p.X>=p.Y ? corners[0]*(1-p.X)+corners[1]*(p.X-p.Y)+corners[2]*p.Y
+                        : corners[0]*(1-p.Y)+corners[2]*p.X+corners[3]*(p.Y-p.X);
+    };
+    // Every grid corner is shared by up to four sub-rectangles: evaluate it once.
+    struct Corner { Vector3 position; Color colour; Vector2 uv; };
+    std::vector<Corner> grid(uCuts.size()*vCuts.size());
+    for (std::size_t i=0;i<uCuts.size();++i)
+        for (std::size_t j=0;j<vCuts.size();++j)
+            grid[i*vCuts.size()+j]={point(Vector2{uCuts[i],vCuts[j]}),colour(uCuts[i],vCuts[j]),
+                                    uv(uCuts[i],vCuts[j])};
+    const auto at=[&](std::size_t i,std::size_t j) -> const Corner& { return grid[i*vCuts.size()+j]; };
+    for (std::size_t i=0;i+1<uCuts.size();++i)
+        for (std::size_t j=0;j+1<vCuts.size();++j)
+        {
+            const float u=uCuts[i],un=uCuts[i+1],v=vCuts[j],vn=vCuts[j+1];
+            const std::array<Vector2,4> rectangle={Vector2{u,v},{un,v},{un,vn},{u,vn}};
+            if (u>=vn || un<=v)
+            {
+                const Corner &a=at(i,j),&b=at(i+1,j),&c=at(i+1,j+1),&d=at(i,j+1);
+                mesh.addTexturedQuad(a.position,b.position,c.position,d.position,
+                    a.colour,b.colour,c.colour,d.colour,a.uv,b.uv,c.uv,d.uv);
+                continue;
+            }
+            for (float side : {-1.0f,1.0f})
+            {
+                std::array<Vector2,6> clipped;
+                std::size_t count=0;
+                auto previous=rectangle.back();
+                float before=(previous.X-previous.Y)*side;
+                for (const auto current : rectangle)
+                {
+                    const float after=(current.X-current.Y)*side;
+                    if ((before>=0)!=(after>=0))
+                        clipped[count++]=previous+(current-previous)*(before/(before-after));
+                    if (after>=0) clipped[count++]=current;
+                    previous=current; before=after;
+                }
+                for (std::size_t k=1;k+1<count;++k)
+                {
+                    const std::array<Vector2,3> p={clipped[0],clipped[k],clipped[k+1]};
+                    const std::array<Vector3,3> positions={point(p[0]),point(p[1]),point(p[2])};
+                    if (Vector3::Cross(positions[1]-positions[0],positions[2]-positions[0])
+                            .LengthSquared()<=1e-10f) continue;
+                    mesh.addTexturedTriangle(positions,
+                        {colour(p[0].X,p[0].Y),colour(p[1].X,p[1].Y),colour(p[2].X,p[2].Y)},
+                        {uv(p[0].X,p[0].Y),uv(p[1].X,p[1].Y),uv(p[2].X,p[2].Y)});
+                }
+            }
         }
 }
 
