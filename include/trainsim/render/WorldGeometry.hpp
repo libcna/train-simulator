@@ -190,8 +190,13 @@ public:
         : workerThreads_(std::max<std::size_t>(1,workerThreads)) {}
     [[nodiscard]] static std::size_t defaultWorkerThreads() noexcept
     {
+#ifdef __EMSCRIPTEN__
+        // The default web artifact deliberately avoids SharedArrayBuffer/COOP/COEP requirements.
+        return 1;
+#else
         // Bounded: the host is shared and the render thread must keep a core.
         return std::clamp<std::size_t>(std::thread::hardware_concurrency()/2,1,4);
+#endif
     }
     void build(const Sim::Route& route, const World::StreamingWorld& world,
                double anchorDistance, int graphicsQuality, float vegetationDistance,

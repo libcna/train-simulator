@@ -17,6 +17,7 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
                                      const Sim::ServiceState& service)
 {
     const auto begin = std::chrono::steady_clock::now();
+    bool publishedThisFrame = false;
     if (!worldStreaming_) worldStreaming_ = std::make_unique<WorldStreamingState>();
     auto& stream = *worldStreaming_;
     const auto current = world.currentChunk();
@@ -114,6 +115,7 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
         worldAnchorDistance_ = stream.anchor;
         stream.target = -1;
         ++worldRebuilds_;
+        publishedThisFrame = true;
     }
     else if (stream.target != -1)
     {
@@ -159,9 +161,18 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
             }
         }
     }
-    if (stream.target == -1 && next != current)
+    if (stream.target == -1 && next != current && !publishedThisFrame)
     {
         resetJob(next);
+#ifdef __EMSCRIPTEN__
+        // Keep the standard web build free of pthread/SharedArrayBuffer deployment constraints.
+        // CPU generation is synchronous there; buffer staging still remains frame-budgeted.
+        Sim::Route routeCopy=route;
+        World::StreamingWorld snapshot(routeCopy,world.chunkLength(),world.radius());
+        snapshot.update(stream.anchor);
+        stream.geometry->build(routeCopy,snapshot,stream.anchor,graphicsQuality_,
+                               vegetationDistanceMetres_,worldSun_);
+#else
         // Own the route and world snapshot in the job, so neither simulation updates nor
         // renderer destruction can race geometry generation. Destruction joins the future.
         stream.worker = std::async(std::launch::async,
@@ -173,6 +184,7 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
                 geometry->build(routeCopy,snapshot,anchor,quality,vegetation,sun);
                 return std::move(geometry);
             });
+#endif
     }
     const double ms = std::chrono::duration<double,std::milli>(
         std::chrono::steady_clock::now()-begin).count();
@@ -183,6 +195,7 @@ void SceneRenderer::updateStaticWorld(const Sim::Route& route,
 void SceneRenderer::updateTrack(const Sim::Route& route, const Sim::ServiceState& service)
 {
     const auto begin = std::chrono::steady_clock::now();
+    bool publishedThisFrame = false;
     if (!trackStreaming_) trackStreaming_ = std::make_unique<TrackStreamingState>();
     auto& stream = *trackStreaming_;
     const auto anchorFor = [&](double distance) {
@@ -262,6 +275,7 @@ void SceneRenderer::updateTrack(const Sim::Route& route, const Sim::ServiceState
         trackAnchorDistance_ = requested;
         stream.target = -1;
         ++trackRebuilds_;
+        publishedThisFrame = true;
     }
     else if (stream.target >= 0)
     {
@@ -292,9 +306,13 @@ void SceneRenderer::updateTrack(const Sim::Route& route, const Sim::ServiceState
             }
         }
     }
-    if (stream.target < 0 && next != requested)
+    if (stream.target < 0 && next != requested && !publishedThisFrame)
     {
         resetJob(next);
+#ifdef __EMSCRIPTEN__
+        // See the world-window path above: no pthreads in the distributable web build.
+        stream.geometry->build(route,next,graphicsQuality_);
+#else
         // The job owns its route copy and CPU batch; destruction joins the future.
         stream.worker = std::async(std::launch::async,
             [geometry=std::move(stream.geometry), routeCopy=route, anchor=next,
@@ -302,6 +320,7 @@ void SceneRenderer::updateTrack(const Sim::Route& route, const Sim::ServiceState
                 geometry->build(routeCopy,anchor,quality);
                 return std::move(geometry);
             });
+#endif
     }
     const double ms = std::chrono::duration<double,std::milli>(
         std::chrono::steady_clock::now()-begin).count();

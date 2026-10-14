@@ -22,7 +22,7 @@ public:
     GpuMesh(Microsoft::Xna::Framework::Graphics::GraphicsDevice& device, const MeshData& data,
             bool streamed = false);
     // An empty streamed mesh whose segments are filled by replaceSegment.
-    GpuMesh() : streamed_(true) {}
+    GpuMesh();
     // Full Discard uploads reuse exact-sized buffers; changed topology reallocates as needed.
     int replace(Microsoft::Xna::Framework::Graphics::GraphicsDevice& device, const MeshData& data);
     // Upload one segment of `data` (streamed meshes only), so a large material can be staged

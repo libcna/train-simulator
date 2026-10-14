@@ -38,6 +38,8 @@ const VertexDeclaration& litColorDeclaration()
 }
 }
 
+GpuMesh::GpuMesh() : streamed_(true) {}
+
 GpuMesh::GpuMesh(GraphicsDevice& device, const MeshData& data, bool streamed)
     : streamed_(streamed)
 {

@@ -4,11 +4,20 @@
 #include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
 #include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
 #include "Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"
+#include <string>
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
 namespace TrainSim::Render {
 namespace {
-constexpr const char* vertex=R"(#version 330 core
+#ifdef __EMSCRIPTEN__
+constexpr const char* shaderVersion=R"(#version 300 es
+precision highp float;
+)";
+#else
+constexpr const char* shaderVersion=R"(#version 330 core
+)";
+#endif
+const std::string vertex=std::string(shaderVersion)+R"(
 layout(location=0) in vec3 position;
 layout(location=2) in vec2 uv;
 layout(location=3) in vec4 colour;
@@ -27,7 +36,7 @@ void main() {
     worldPosition=p.xyz; depth=-(View*p).z; texcoord=uv; tint=colour.rgb;
 }
 )";
-constexpr const char* fragment=R"(#version 330 core
+const std::string fragment=std::string(shaderVersion)+R"(
 in vec3 worldPosition;
 in vec2 texcoord;
 in vec3 tint;
@@ -76,7 +85,7 @@ void main() {
 )";
 }
 OpenGL33WaterEffect::OpenGL33WaterEffect(GraphicsDevice& device)
-    : effect_(std::make_unique<ShaderEffect>(device,vertex,fragment)) {}
+    : effect_(std::make_unique<ShaderEffect>(device,vertex.c_str(),fragment.c_str())) {}
 OpenGL33WaterEffect::~OpenGL33WaterEffect()=default;
 bool OpenGL33WaterEffect::valid() const { return effect_->IsEffectValid(); }
 void OpenGL33WaterEffect::draw(GpuMesh& mesh,GraphicsDevice& device,BasicEffect& reference,

@@ -275,8 +275,8 @@ parent/
   train-simulator/
 ```
 
-Only CNA's OpenGL 3.3 renderer is configured. Web, mobile, macOS-specific work, Vulkan, DirectX,
-and other renderers are deliberately out of scope.
+The native build uses CNA's OpenGL 3.3 renderer. An Emscripten build uses CNA's WebGL 2 renderer;
+mobile, macOS-specific work, Vulkan, DirectX, and other renderers are out of scope.
 
 ## Build and run
 
@@ -295,6 +295,24 @@ The system `ccache` executable is mandatory and CMake rejects a different compil
 use the shared `CCACHE_DIR=/rv/cnaccache` with `CCACHE_BASEDIR=/rv`. Never raise build parallelism above four. The
 repository uses one incremental `build/` tree and copies its small runtime asset set beside the
 executable.
+
+### WebGL 2 build
+
+A reproducible Emscripten build is provided for modern browsers. It bundles the runtime assets into
+the generated data file and emits `train-simulator.html`, `.js`, `.wasm`, and `.data` in the shared
+`build-probe/` tree:
+
+```bash
+./tools/build_web.sh
+python3 -m http.server 8000 --directory build-probe
+```
+
+Open `http://localhost:8000/train-simulator.html`. Do not open the HTML directly from disk: the
+browser must fetch the WebAssembly and data files over HTTP. The default web artifact is
+single-threaded, so it does not require cross-origin isolation headers. Its canvas scales to the
+browser while the renderer retains the game's 16:9 backing resolution; use the page's Fullscreen
+button for an immersive view. Pointer-lock look applies a browser-specific sensitivity correction;
+the pause-menu mouse sensitivity setting remains available for personal adjustment.
 
 To create a relocatable Linux desktop tree, install into a chosen prefix. The install includes the
 executable, CNA and SDL runtime libraries, assets, project/dependency licenses, and asset/audio

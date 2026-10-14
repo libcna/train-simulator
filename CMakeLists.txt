@@ -27,7 +27,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-option(TRAINSIM_BUILD_GAME "Build the CNA OpenGL 3.3 application" ON)
+option(TRAINSIM_BUILD_GAME "Build the CNA OpenGL 3.3/WebGL 2 application" ON)
 option(TRAINSIM_BUILD_TESTS "Build deterministic simulation tests" ON)
 option(TRAINSIM_WARNINGS_AS_ERRORS "Treat warnings in project code as errors" OFF)
 
@@ -69,18 +69,30 @@ target_include_directories(trainsim_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/inc
 target_link_libraries(trainsim_core PRIVATE trainsim_warnings)
 
 if(TRAINSIM_BUILD_GAME)
-    if(EMSCRIPTEN OR ANDROID OR IOS OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-        message(FATAL_ERROR "Train Simulator currently supports desktop OpenGL 3.3 only")
+    if(ANDROID OR IOS OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        message(FATAL_ERROR "Train Simulator currently supports desktop OpenGL 3.3 and Emscripten WebGL 2 only")
     endif()
 
-    # This campaign deliberately builds one renderer and one platform family.
-    set(CNA_GRAPHICS_RENDERER OPENGL33 CACHE STRING "CNA renderer" FORCE)
+    # Both products use CNA's shared EasyGL implementation, with the exact profile selected for
+    # the host. Emscripten's WEBGL2 identity requests a WebGL 2 context and GLSL ES 3.00.
+    if(EMSCRIPTEN)
+        set(CNA_GRAPHICS_RENDERER WEBGL2 CACHE STRING "CNA renderer" FORCE)
+    else()
+        set(CNA_GRAPHICS_RENDERER OPENGL33 CACHE STRING "CNA renderer" FORCE)
+    endif()
     set(CNA_GRAPHICS_RENDERERS "" CACHE STRING "No multi-renderer build" FORCE)
     set(CNA_CNAEXT ON CACHE BOOL "Relative mouse mode and diagnostics" FORCE)
     set(CNA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(CNA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(CNA_BUILD_C_API OFF CACHE BOOL "" FORCE)
-    set(CNA_ENABLE_NET ON CACHE BOOL "CNA avatars currently live in Gamer Services" FORCE)
+    # Avatars live in Gamer Services but do not require the ENet networking module. Avoid linking
+    # that unused transport into the browser bundle.
+    set(CNA_ENABLE_GAMER_SERVICES ON CACHE BOOL "CNA avatars live in Gamer Services" FORCE)
+    if(EMSCRIPTEN)
+        set(CNA_ENABLE_NET OFF CACHE BOOL "No browser multiplayer transport is used" FORCE)
+    else()
+        set(CNA_ENABLE_NET ON CACHE BOOL "CNA desktop networking" FORCE)
+    endif()
     set(CNA_ENABLE_VIDEO OFF CACHE STRING "" FORCE)
     set(CNA_ENABLE_DRACO OFF CACHE BOOL "" FORCE)
     set(EASYGL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -103,8 +115,10 @@ if(TRAINSIM_BUILD_GAME)
     endforeach()
 
     add_subdirectory("${TRAINSIM_CNA_ROOT}" cna EXCLUDE_FROM_ALL)
-    if(NOT CNA_GRAPHICS_RENDERER STREQUAL "OPENGL33")
-        message(FATAL_ERROR "Train Simulator only supports CNA OpenGL 3.3 in this campaign")
+    if(EMSCRIPTEN AND NOT CNA_GRAPHICS_RENDERER STREQUAL "WEBGL2")
+        message(FATAL_ERROR "Train Simulator's Emscripten build requires CNA WEBGL2")
+    elseif(NOT EMSCRIPTEN AND NOT CNA_GRAPHICS_RENDERER STREQUAL "OPENGL33")
+        message(FATAL_ERROR "Train Simulator's desktop build requires CNA OpenGL 3.3")
     endif()
 
     add_library(trainsim_render STATIC
@@ -128,37 +142,65 @@ if(TRAINSIM_BUILD_GAME)
         src/app/Main.cpp
         src/app/TrainSimulatorGame.cpp)
     target_link_libraries(train-simulator PRIVATE trainsim_core trainsim_render CNA trainsim_warnings)
+    if(EMSCRIPTEN)
+        set_target_properties(train-simulator PROPERTIES SUFFIX ".html")
+        target_link_libraries(train-simulator PRIVATE CNA::EmscriptenAsyncify)
+        target_link_options(train-simulator PRIVATE
+            -sALLOW_MEMORY_GROWTH=1
+            -sINITIAL_MEMORY=268435456
+            -sMAXIMUM_MEMORY=2147483648
+            -sSTACK_SIZE=1048576
+            -sFORCE_FILESYSTEM=1
+            "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets"
+            "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html")
+        cna_apply_emscripten_renderer_link_contract(train-simulator)
+    endif()
     # Explicit colour-space calibration tool; no shader changes to the production renderer.
     add_executable(trainsim_colour_probe EXCLUDE_FROM_ALL tools/colour_pipeline_probe.cpp)
     target_link_libraries(trainsim_colour_probe PRIVATE trainsim_render CNA trainsim_warnings)
-    set_target_properties(train-simulator PROPERTIES
-        INSTALL_RPATH "\$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
-    if(TARGET cna_shared)
+    if(NOT EMSCRIPTEN)
+        set_target_properties(train-simulator PROPERTIES
+            INSTALL_RPATH "\$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+    endif()
+    if(TARGET cna_shared AND NOT EMSCRIPTEN)
         set_target_properties(cna_shared PROPERTIES INSTALL_RPATH "\$ORIGIN")
     endif()
     file(GLOB_RECURSE TRAINSIM_RUNTIME_ASSETS CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/*")
     set_property(TARGET train-simulator APPEND PROPERTY LINK_DEPENDS
         "${TRAINSIM_RUNTIME_ASSETS}")
-    add_custom_command(TARGET train-simulator POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:train-simulator>/assets"
-        COMMENT "Copying Train Simulator runtime assets")
+    if(NOT EMSCRIPTEN)
+        add_custom_command(TARGET train-simulator POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:train-simulator>/assets"
+            COMMENT "Copying Train Simulator runtime assets")
+    endif()
     if(TARGET SDL3::SDL3main)
         target_link_libraries(train-simulator PRIVATE SDL3::SDL3main)
     endif()
 
-    install(TARGETS train-simulator
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-    install(TARGETS cna_shared
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-    install(DIRECTORY assets/
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/train-simulator/assets")
-    install(DIRECTORY "${CNA_SDL_PREBUILT_ROOT}/install/lib/"
-        DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        FILES_MATCHING PATTERN "libSDL3*.so*"
-        PATTERN "cmake" EXCLUDE
-        PATTERN "pkgconfig" EXCLUDE)
+    if(EMSCRIPTEN)
+        install(FILES
+            "${CMAKE_CURRENT_BINARY_DIR}/train-simulator.html"
+            "${CMAKE_CURRENT_BINARY_DIR}/train-simulator.js"
+            "${CMAKE_CURRENT_BINARY_DIR}/train-simulator.wasm"
+            "${CMAKE_CURRENT_BINARY_DIR}/train-simulator.data"
+            DESTINATION ".")
+    else()
+        install(TARGETS train-simulator
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+        if(TARGET cna_shared)
+            install(TARGETS cna_shared
+                LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+        endif()
+        install(DIRECTORY assets/
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/train-simulator/assets")
+        install(DIRECTORY "${CNA_SDL_PREBUILT_ROOT}/install/lib/"
+            DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+            FILES_MATCHING PATTERN "libSDL3*.so*"
+            PATTERN "cmake" EXCLUDE
+            PATTERN "pkgconfig" EXCLUDE)
+    endif()
     install(FILES LICENSE
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/train-simulator"
         RENAME TrainSimulator-LICENSE)
@@ -168,8 +210,10 @@ if(TRAINSIM_BUILD_GAME)
     install(FILES "${TRAINSIM_SHARP_RUNTIME_ROOT}/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/train-simulator"
         RENAME SharpRuntime-LICENSE)
-    install(DIRECTORY "${CNA_SDL_PREBUILT_ROOT}/install/share/licenses/"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/train-simulator/SDL")
+    if(NOT EMSCRIPTEN)
+        install(DIRECTORY "${CNA_SDL_PREBUILT_ROOT}/install/share/licenses/"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/train-simulator/SDL")
+    endif()
     install(FILES README.md bugs.md LICENSE
         DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/train-simulator")
     install(FILES docs/ARCHITECTURE.md docs/ASSETS.md docs/AUDIO.md docs/AUDIT.md

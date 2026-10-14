@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#071018">
+  <title>Northern Valley Express</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #071018; }
+    body { display: grid; place-items: center; }
+    #frame { position: relative; width: min(100vw, calc(100vh * 16 / 9)); aspect-ratio: 16 / 9;
+             background: #000; box-shadow: 0 1.5rem 5rem #000b; }
+    canvas { display: block; width: 100%; height: 100%; outline: none; background: #000; }
+    #loading { position: absolute; inset: 0; display: grid; place-content: center; gap: 1rem;
+               padding: 2rem; text-align: center; background: #071018; transition: opacity .3s; }
+    #loading.done { opacity: 0; pointer-events: none; }
+    #title { color: #eef7f7; font-size: clamp(1.4rem, 3vw, 2.4rem); letter-spacing: .08em; }
+    #status { min-height: 1.5em; color: #a9c1c9; }
+    progress { width: min(26rem, 70vw); height: .55rem; accent-color: #d5aa42; }
+    #fullscreen { position: absolute; right: .8rem; bottom: .8rem; border: 1px solid #ffffff55;
+                  border-radius: .35rem; padding: .55rem .75rem; color: #fff; background: #071018bb;
+                  cursor: pointer; opacity: .65; }
+    #fullscreen:hover, #fullscreen:focus-visible { opacity: 1; }
+    @media (max-aspect-ratio: 16 / 9) { #frame { width: 100vw; height: auto; } }
+    @media (min-aspect-ratio: 16 / 9) { #frame { width: auto; height: 100vh; } }
+  </style>
+</head>
+<body>
+  <main id="frame">
+    <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+    <section id="loading" aria-live="polite">
+      <div id="title">NORTHERN VALLEY EXPRESS</div>
+      <progress id="progress" max="100" value="0"></progress>
+      <div id="status">Loading simulator…</div>
+    </section>
+    <button id="fullscreen" type="button" title="Toggle fullscreen">Fullscreen</button>
+  </main>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const loading = document.getElementById('loading');
+    const status = document.getElementById('status');
+    const progress = document.getElementById('progress');
+    let totalDependencies = 0;
+    var Module = {
+      canvas,
+      printErr: text => console.error(text),
+      setStatus(text) {
+        if (!text) {
+          loading.classList.add('done');
+          canvas.focus();
+          return;
+        }
+        const match = text.match(/([\d.]+)\/([\d.]+)/);
+        status.textContent = text;
+        if (match) {
+          progress.max = Number(match[2]) * 100;
+          progress.value = Number(match[1]) * 100;
+        }
+      },
+      monitorRunDependencies(left) {
+        totalDependencies = Math.max(totalDependencies, left);
+        Module.setStatus(left ? `Loading data (${totalDependencies - left}/${totalDependencies})` : 'Starting…');
+      },
+      onAbort(reason) {
+        loading.classList.remove('done');
+        status.textContent = `Could not start: ${reason}`;
+      }
+    };
+    window.addEventListener('error', event => Module.onAbort(event.message));
+    document.getElementById('fullscreen').addEventListener('click', async () => {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.getElementById('frame').requestFullscreen();
+      canvas.focus();
+    });
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

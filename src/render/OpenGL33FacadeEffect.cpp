@@ -4,11 +4,20 @@
 #include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
 #include "Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"
 #include <stdexcept>
+#include <string>
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
 namespace TrainSim::Render {
 namespace {
-constexpr const char* vertex=R"(#version 330 core
+#ifdef __EMSCRIPTEN__
+constexpr const char* shaderVersion=R"(#version 300 es
+precision highp float;
+)";
+#else
+constexpr const char* shaderVersion=R"(#version 330 core
+)";
+#endif
+const std::string vertex=std::string(shaderVersion)+R"(
 layout(location=0) in vec3 position;
 layout(location=1) in vec3 normal;
 layout(location=2) in vec2 uv;
@@ -32,7 +41,7 @@ void main() {
     depth=-v.z; texcoord=uv; tint=colour;
 }
 )";
-constexpr const char* fragment=R"(#version 330 core
+const std::string fragment=std::string(shaderVersion)+R"(
 in vec3 worldPosition,surfaceNormal;
 in vec2 texcoord;
 in vec4 tint;
@@ -58,7 +67,7 @@ void main() {
 )";
 }
 OpenGL33FacadeEffect::OpenGL33FacadeEffect(GraphicsDevice& device)
-    : effect_(std::make_unique<ShaderEffect>(device,vertex,fragment))
+    : effect_(std::make_unique<ShaderEffect>(device,vertex.c_str(),fragment.c_str()))
 {
     if (!effect_->IsEffectValid()) throw std::runtime_error("OpenGL33 facade comparison shader failed to compile");
 }

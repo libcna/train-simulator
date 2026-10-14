@@ -42,6 +42,14 @@ namespace TrainSim::App {
 
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
+#ifdef __EMSCRIPTEN__
+// Pointer-lock motion is reported in CSS pixels.  The same numeric sensitivity feels markedly
+// slower than SDL's native relative mouse counts, especially on high-DPI displays, so compensate
+// at the input boundary while preserving the player's configured sensitivity and menu range.
+constexpr float kMouseLookPlatformScale = 2.5f;
+#else
+constexpr float kMouseLookPlatformScale = 1.0f;
+#endif
 
 std::string speedText(double metresPerSecond)
 {
@@ -948,10 +956,11 @@ void TrainSimulatorGame::updatePlayer(float dt, const KeyboardState& keyboard, c
             mouse.getXProperty(),mouse.getYProperty(),
             previousMouse_.getXProperty(),previousMouse_.getYProperty(),relativeModeActive);
         if (delta.x != 0 || delta.y != 0) ++mouseMotionSamples_;
+        const float lookSensitivity = settings_.mouseSensitivity * kMouseLookPlatformScale;
         playerYaw_ = MathHelper::WrapAngle(
-            playerYaw_ + static_cast<float>(delta.x) * settings_.mouseSensitivity);
+            playerYaw_ + static_cast<float>(delta.x) * lookSensitivity);
         playerPitch_ = std::clamp(
-            playerPitch_ - static_cast<float>(delta.y) * settings_.mouseSensitivity,
+            playerPitch_ - static_cast<float>(delta.y) * lookSensitivity,
             -1.45f, 1.45f);
     }
 
